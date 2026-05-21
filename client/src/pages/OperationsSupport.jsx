@@ -5,6 +5,7 @@ import { getOperationsSocket } from '../utils/operationsSocket';
 import { useAuth } from '../context/AuthContext';
 import SharedChallanModal from '../components/SharedChallanModal';
 import SearchableRiderFilter from '../components/SearchableRiderFilter';
+import { formatRiderCompact } from '../utils/riderFormat';
 import {
   getDescriptionText,
   getOrderTag,
@@ -80,9 +81,7 @@ function StatusBadge({ status }) {
 
 function getRiderDetails(rider, fallbackName = 'Unassigned') {
   return {
-    name: rider?.rider_name || fallbackName,
-    vehicle: rider?.vehicle || '—',
-    number: rider?.number_plate || rider?.contact || '—',
+    name: formatRiderCompact(rider, fallbackName),
   };
 }
 
