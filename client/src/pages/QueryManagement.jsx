@@ -5,11 +5,12 @@ import { API_BASE as API } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 const PAGE_SIZE = 50;
 const HIDDEN_TYPES_BOOKING = ['Cow', 'Fancy Cow', 'Goat'];
-const CONFIRM_ORDER_TYPES_BOOKING = ['Fancy Cow', 'Goat', 'Hissa - Standard', 'Hissa - Premium', 'Hissa - Waqf', 'Goat (Hissa)'];
+const CONFIRM_ORDER_TYPES_BOOKING = ['Hissa - Standard', 'Hissa - Premium', 'Hissa - Waqf', 'Goat (Hissa)'];
 const CONFIRM_ORDER_TYPES_FARM = ['Fancy Cow', 'Goat'];
 const CLOSED_BY_OPTIONS = ['Ashhad Bhai', 'Ammar Bhai', 'Ashhal', 'Abuzar', 'Omer', 'Abdullah', 'Huzaifa', 'Hanzala', 'External'];
 const DAYS = ['DAY 1', 'DAY 2', 'DAY 3'];
 const ORDER_TYPE_PRESET_AMOUNTS = { 'Hissa - Standard': '25000', 'Hissa - Premium': '30000', 'Hissa - Waqf': '21000' };
+const GOAT_NUMBER_PATTERN = /^G[1-9]\d*$/;
 
 const COLUMNS = [
   { key: 'lead_id',          label: 'Lead ID'          },
@@ -30,9 +31,21 @@ const COLUMNS = [
   { key: 'description',      label: 'Description'      },
   { key: 'created_at',       label: 'Created'          },
 ];
+const BOOKING_VISIBLE_COLUMN_KEYS = new Set([
+  'lead_id',
+  'booking_name',
+  'phone_number',
+  'booking_date',
+  'source',
+  'reference',
+  'query_by',
+  'description',
+  'created_at',
+]);
 
 const AMOUNT_KEYS = ['total_amount'];
-const SLOTS = ['SLOT 1', 'SLOT 2', 'SLOT 3', 'SLOT GOAT', 'SLOT WAQF'];
+const BOOKING_SLOTS = ['SLOT 1', 'SLOT 2', 'SLOT 3', 'SLOT WAQF'];
+const FARM_SLOTS = ['SLOT 1', 'SLOT 2', 'SLOT 3', 'SLOT GOAT', 'SLOT WAQF'];
 
 function formatAmount(val) {
   if (val == null || val === '') return '—';
@@ -77,6 +90,7 @@ export default function QueryManagement() {
   const [yearFilter, setYearFilter] = useState('2026');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -111,9 +125,11 @@ export default function QueryManagement() {
   const token = localStorage.getItem('token');
   const location = useLocation();
   const isFarm = location.pathname.startsWith('/farm');
+  const slotOptions = isFarm ? FARM_SLOTS : BOOKING_SLOTS;
   const isRestrictedBookingRole = ['Staff - Bookings', 'Co-Manager - Bookings'].includes(user?.role);
-  const hideConfirmOrder = !isFarm && isRestrictedBookingRole;
+  const hideConfirmOrder = !isFarm;
   const hideDeleteAction = !isFarm && isRestrictedBookingRole;
+  const visibleColumns = isFarm ? COLUMNS : COLUMNS.filter((c) => BOOKING_VISIBLE_COLUMN_KEYS.has(c.key));
   const visibleOrderTypes = (filters.order_types || []).filter((t) => (isFarm ? true : !HIDDEN_TYPES_BOOKING.includes(t)));
   const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
 
@@ -134,12 +150,12 @@ export default function QueryManagement() {
     try {
       const params = new URLSearchParams();
       if (search.trim()) params.set('search', search.trim());
-      if (orderType) params.set('order_type', orderType);
+      if (isFarm && orderType) params.set('order_type', orderType);
       if (day) params.set('day', day);
       if (reference) params.set('reference', reference);
-      if (area) params.set('area', area);
-      if (isFarm) params.set('source', 'Farm');
-      if (!isFarm) params.set('omit_hidden_types', '1');
+      if (isFarm && area) params.set('area', area);
+if (isFarm) params.set('source', 'Farm');
+if (!isFarm) params.set('omit_hidden_types', '1');
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
       params.set('page', String(page));
       params.set('limit', String(PAGE_SIZE));
@@ -174,7 +190,6 @@ export default function QueryManagement() {
     };
     const getCowHissa = async () => {
       if (!ot || isFarm) return;
-      if (ot === 'Goat (Hissa)') { setConfirmForm((p) => ({ ...p, cow_number: '0', hissa_number: '0' })); return; }
       try {
         const res = await authFetch(`${API}/booking/get-available-cow-hissa`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_type: ot, day: d || null, booking_date: ds || null }) });
         if (res.ok) { const d2 = await res.json(); setConfirmForm((p) => ({ ...p, cow_number: d2.cow_number || '', hissa_number: d2.hissa_number || '' })); }
@@ -190,12 +205,12 @@ export default function QueryManagement() {
 
   const toggleSelect = (id) => setSelectedIds((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleSelectAll = () => selectedIds.size === leads.length ? setSelectedIds(new Set()) : setSelectedIds(new Set(leads.map((r) => r.lead_id)));
-  const handleResetFilters = () => { setSearch(''); setOrderType(''); setDay(''); setReference(''); setArea(''); setYearFilter('2026'); setSelectedIds(new Set()); setError(''); };
+  const handleResetFilters = () => { setSearch(''); setOrderType(''); setDay(''); setReference(''); setArea(''); setYearFilter('2026'); setSelectedIds(new Set()); setError(''); setSuccess(''); };
 
   const shouldSkip = (ot, c, h) => {
     if (ot !== 'Goat (Hissa)') return false;
-    const cv = String(c ?? '').trim(); const hv = String(h ?? '').trim();
-    return (cv === '0' || cv === '') && (hv === '0' || hv === '');
+    const cv = String(c ?? '').trim().toUpperCase();
+    return !GOAT_NUMBER_PATTERN.test(cv);
   };
 
   const checkDup = useCallback(async (c, h, ot, d, bd) => {
@@ -254,6 +269,7 @@ export default function QueryManagement() {
     const totalAmount = Number(confirmForm.total_amount);
     const c = (confirmForm.cow_number || '').trim();
     const h = (confirmForm.hissa_number || '').trim();
+    const normalizedGoatNumber = c.toUpperCase();
     const fe = {};
     if (!ot) fe.order_type = 'Order type is required';
     if (!(confirmForm.total_amount || '').toString().trim()) fe.total_amount = 'Total amount is required';
@@ -273,12 +289,16 @@ export default function QueryManagement() {
       if (!h) fe.hissa_number = 'Hissa number is required';
     }
     if (Object.keys(fe).length > 0) { setConfirmFormErrors(fe); return; }
+    if (!isFarm && ot === 'Goat (Hissa)' && !GOAT_NUMBER_PATTERN.test(normalizedGoatNumber)) {
+      setConfirmFormErrors((p) => ({ ...p, cow_number: 'Goat number must be in G1, G2 format' }));
+      return;
+    }
     setConfirmFormErrors({});
     if (!isFarm && c && h && ot && !shouldSkip(ot, c, h)) {
       const dup = await checkDup(c, h, ot, d, bd);
       if (dup) { setConfirmDuplicateError(dup); return; }
     }
-    setConfirmDuplicateError(null); setConfirmingLeadId(lead.lead_id); setError('');
+    setConfirmDuplicateError(null); setConfirmingLeadId(lead.lead_id); setError(''); setSuccess('');
     try {
       const res = await authFetch(`${API}/booking/leads/${encodeURIComponent(lead.lead_id)}/confirm-order`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -306,8 +326,8 @@ export default function QueryManagement() {
           order_id: (confirmForm.order_id || '').trim(),
           slot: (confirmForm.slot || '').trim() || null,
           booking_date: bd || null,
-          cow_number: c || null,
-          hissa_number: h || null
+          cow_number: ot === 'Goat (Hissa)' ? normalizedGoatNumber : (c || null),
+          hissa_number: ot === 'Goat (Hissa)' ? '0' : (h || null)
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -316,6 +336,8 @@ export default function QueryManagement() {
         setConfirmForm({ order_type: '', total_amount: '', address: '', area: '', day: '', closed_by: '', shareholder_name: '', order_id: '', slot: '', booking_date: '', cow_number: '', hissa_number: '' });
         setConfirmDuplicateError(null); setConfirmFormErrors({});
         setSelectedIds((p) => { const n = new Set(p); n.delete(lead.lead_id); return n; });
+        setSuccess(`Order ${data.order_id} saved successfully.`);
+        setTimeout(() => setSuccess(''), 3000);
         fetchLeads();
       } else setError(data.message || 'Failed to confirm order');
     } catch (e) { setError('Failed to confirm order'); }
@@ -388,12 +410,12 @@ export default function QueryManagement() {
     do {
       const params = new URLSearchParams();
       if (search.trim()) params.set('search', search.trim());
-      if (orderType) params.set('order_type', orderType);
-      if (day) params.set('day', day);
-      if (reference) params.set('reference', reference);
-      if (area) params.set('area', area);
-      if (isFarm) params.set('source', 'Farm');
-      if (!isFarm) params.set('omit_hidden_types', '1');
+      if (isFarm && orderType) params.set('order_type', orderType);
+if (day) params.set('day', day);
+if (reference) params.set('reference', reference);
+if (isFarm && area) params.set('area', area);
+if (isFarm) params.set('source', 'Farm');
+if (!isFarm) params.set('omit_hidden_types', '1');
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
       params.set('page', String(pageNum));
       params.set('limit', String(limit));
@@ -422,8 +444,10 @@ export default function QueryManagement() {
     XLSX.writeFile(wb, `queries-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
     try {
       const af = {};
-      if (search?.trim()) af.search = search.trim(); if (area) af.area = area;
-      if (orderType) af.order_type = orderType; if (day) af.day = day;
+      if (search?.trim()) af.search = search.trim();
+if (isFarm && area) af.area = area;
+if (isFarm && orderType) af.order_type = orderType;
+if (day) af.day = day;
       if (reference) af.reference = reference; if (yearFilter) af.year = yearFilter;
       await authFetch(`${API}/booking/leads/export-audit`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -497,16 +521,18 @@ export default function QueryManagement() {
         {/* Desktop filter bar */}
         <div className="qm-filter-desktop" style={{ display: 'flex', flexWrap: 'nowrap', gap: '10px', marginBottom: '16px', alignItems: 'flex-end', overflowX: 'auto', minWidth: 0, flexShrink: 0 }}>
           <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-            <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Search (name, phone, area, address)</label>
+            <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Search (name, phone, address)</label>
             <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchLeads()}
               style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
           </div>
           {[
-            { label: 'Area', val: area, set: setArea, opts: filters.areas || [], w: 88 },
-            { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes, w: 104 },
-            { label: 'Day',  val: day,  set: setDay,  opts: filters.days || [], w: 80 },
-            { label: 'Reference', val: reference, set: setReference, opts: filters.references || [], w: 88 },
-          ].map(({ label, val, set, opts, w }) => (
+  ...(isFarm ? [
+    { label: 'Area', val: area, set: setArea, opts: filters.areas || [], w: 88 },
+    { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes, w: 104 },
+  ] : []),
+  { label: 'Day',  val: day,  set: setDay,  opts: filters.days || [], w: 80 },
+  { label: 'Reference', val: reference, set: setReference, opts: filters.references || [], w: 88 },
+].map(({ label, val, set, opts, w }) => (
             <div key={label} style={{ width: w, minWidth: w, flexShrink: 0 }}>
               <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px', whiteSpace: 'nowrap' }}>{label}</label>
               <select value={val} onChange={(e) => set(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }}>
@@ -542,11 +568,13 @@ export default function QueryManagement() {
           {mobileFiltersOpen && (
             <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {[
-                { label: 'Area', val: area, set: setArea, opts: filters.areas || [] },
-                { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes },
-                { label: 'Day',  val: day,  set: setDay,  opts: filters.days || [] },
-                { label: 'Reference', val: reference, set: setReference, opts: filters.references || [] },
-              ].map(({ label, val, set, opts }) => (
+  ...(isFarm ? [
+    { label: 'Area', val: area, set: setArea, opts: filters.areas || [] },
+    { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes },
+  ] : []),
+  { label: 'Day',  val: day,  set: setDay,  opts: filters.days || [] },
+  { label: 'Reference', val: reference, set: setReference, opts: filters.references || [] },
+].map(({ label, val, set, opts }) => (
                 <div key={label}>
                   <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>{label}</label>
                   <select value={val} onChange={(e) => set(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }}>
@@ -566,6 +594,7 @@ export default function QueryManagement() {
         </div>
 
         {error && <div style={{ padding: '10px', background: '#FFF5F2', color: '#C62828', borderRadius: '6px', marginBottom: '13px', flexShrink: 0, fontSize: '10px' }}>{error}</div>}
+        {success && <div style={{ padding: '10px', background: '#F0FDF4', color: '#166534', borderRadius: '6px', marginBottom: '13px', flexShrink: 0, fontSize: '10px', border: '1px solid #BBF7D0' }}>{success}</div>}
 
         {/* Desktop table */}
         <div className="qm-table-wrap" style={{ flex: 1, minHeight: '304px', overflow: 'auto', border: '1px solid #e0e0e0', borderRadius: '6px', background: '#fff' }}>
@@ -581,7 +610,7 @@ export default function QueryManagement() {
                   {!hideConfirmOrder && (
                     <th style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap', width: '120px' }}>Confirm Order</th>
                   )}
-                  {COLUMNS.map((col) => (
+                  {visibleColumns.map((col) => (
                     <th key={col.key} style={{ padding: '10px 8px', textAlign: 'left', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap' }}>{col.label}</th>
                   ))}
                   <th style={{ padding: '10px 8px', textAlign: 'left', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap' }}>Actions</th>
@@ -589,7 +618,7 @@ export default function QueryManagement() {
               </thead>
               <tbody>
                 {leads.length === 0 ? (
-                  <tr><td colSpan={COLUMNS.length + (hideConfirmOrder ? 2 : 3)} style={{ padding: '24px', textAlign: 'center', color: '#666' }}>No queries found.</td></tr>
+                  <tr><td colSpan={visibleColumns.length + (hideConfirmOrder ? 2 : 3)} style={{ padding: '24px', textAlign: 'center', color: '#666' }}>No queries found.</td></tr>
                 ) : leads.map((row) => (
                   <tr key={row.lead_id} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={{ padding: '8px', whiteSpace: 'nowrap' }}><input type="checkbox" checked={selectedIds.has(row.lead_id)} onChange={() => toggleSelect(row.lead_id)} style={{ cursor: 'pointer' }} /></td>
@@ -601,7 +630,7 @@ export default function QueryManagement() {
                         </button>
                       </td>
                     )}
-                    {COLUMNS.map((col) => (
+                    {visibleColumns.map((col) => (
                       <td key={col.key} style={{ padding: '8px', whiteSpace: 'nowrap' }}>{cellVal(col, row)}</td>
                     ))}
                     <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
@@ -631,13 +660,14 @@ export default function QueryManagement() {
                     onChange={(e) => {
                       const nextType = e.target.value;
                       const preset = ORDER_TYPE_PRESET_AMOUNTS[nextType];
+                      const isGoatType = nextType === 'Goat (Hissa)';
                       setConfirmForm((p) => ({
                         ...p,
                         order_type: nextType,
                         total_amount: preset || '0',
                         order_id: '',
-                        cow_number: isFarm ? '0' : '',
-                        hissa_number: isFarm ? '0' : ''
+                        cow_number: isFarm ? '0' : (isGoatType ? p.cow_number : ''),
+                        hissa_number: isFarm ? '0' : (isGoatType ? '0' : '')
                       }));
                       setConfirmDuplicateError(null);
                       setConfirmFormErrors((p) => ({ ...p, order_type: undefined }));
@@ -698,7 +728,12 @@ export default function QueryManagement() {
                     value={confirmForm.day}
                     onChange={(e) => {
                       const nextDay = e.target.value;
-                      setConfirmForm((p) => ({ ...p, day: nextDay, cow_number: '', hissa_number: '' }));
+                      setConfirmForm((p) => ({
+                        ...p,
+                        day: nextDay,
+                        cow_number: p.order_type === 'Goat (Hissa)' ? p.cow_number : '',
+                        hissa_number: p.order_type === 'Goat (Hissa)' ? '0' : '',
+                      }));
                       setConfirmDuplicateError(null);
                       setConfirmFormErrors((p) => ({ ...p, day: undefined }));
                     }}
@@ -732,7 +767,9 @@ export default function QueryManagement() {
                   <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>Slot <span style={{ color: '#dc2626' }}>*</span></label>
                   <select value={confirmForm.slot} onChange={(e) => { setConfirmForm((p) => ({ ...p, slot: e.target.value })); setConfirmFormErrors((p) => ({ ...p, slot: undefined })); }} style={miStyle(confirmFormErrors.slot)}>
                     <option value="">Select Slot</option>
-                    {SLOTS.map((s) => <option key={s} value={s}>{s}</option>)}
+                    {slotOptions.map((s) => (
+  <option key={s} value={s}>{s}</option>
+))}
                   </select>
                   {confirmFormErrors.slot && <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>{confirmFormErrors.slot}</div>}
                 </div>
@@ -743,7 +780,7 @@ export default function QueryManagement() {
                     const nd = e.target.value;
                     setConfirmForm((p) => ({ ...p, booking_date: nd }));
                     setConfirmFormErrors((p) => ({ ...p, booking_date: undefined }));
-                    if (!isFarm && confirmForm.order_type && confirmForm.order_type !== 'Goat (Hissa)' && token) {
+                    if (!isFarm && confirmForm.order_type && token) {
                       authFetch(`${API}/booking/get-available-cow-hissa`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order_type: confirmForm.order_type, day: confirmForm.day || null, booking_date: nd || null }) })
                         .then((r) => r.ok ? r.json() : {})
                         .then((d2) => { if (d2 && (d2.cow_number != null || d2.hissa_number != null)) setConfirmForm((p) => ({ ...p, cow_number: d2.cow_number || '', hissa_number: d2.hissa_number || '' })); })
@@ -755,19 +792,29 @@ export default function QueryManagement() {
                 {!isFarm && (
                 <div className="qm-cow-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>Cow Number <span style={{ color: '#dc2626' }}>*</span></label>
+                    <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>{confirmForm.order_type === 'Goat (Hissa)' ? 'Goat Number' : 'Cow Number'} <span style={{ color: '#dc2626' }}>*</span></label>
                     <input value={confirmForm.cow_number}
-                      onChange={(e) => { setConfirmForm((p) => ({ ...p, cow_number: e.target.value })); setConfirmDuplicateError(null); setConfirmFormErrors((p) => ({ ...p, cow_number: undefined })); }}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        const nextValue = confirmForm.order_type === 'Goat (Hissa)'
+                          ? (raw.toUpperCase().replace(/[^G0-9]/g, '').startsWith('G')
+                            ? `G${raw.toUpperCase().replace(/[^G0-9]/g, '').slice(1).replace(/G/g, '')}`
+                            : raw.toUpperCase().replace(/[^G0-9]/g, '').replace(/G/g, ''))
+                          : raw;
+                        setConfirmForm((p) => ({ ...p, cow_number: nextValue, hissa_number: p.order_type === 'Goat (Hissa)' ? '0' : p.hissa_number }));
+                        setConfirmDuplicateError(null);
+                        setConfirmFormErrors((p) => ({ ...p, cow_number: undefined }));
+                      }}
                       onBlur={async () => { if (!confirmModalLead) return; const { cow_number: c, hissa_number: h, booking_date: bd, order_type: ot, day: d } = confirmForm; if (c && h && ot && !shouldSkip(ot, c, h)) { const dup = await checkDup(c, h, ot, d, bd); if (dup) setConfirmDuplicateError(dup); } }}
                       placeholder="Auto-generated" style={miStyle(confirmFormErrors.cow_number || confirmDuplicateError)} />
                     {confirmFormErrors.cow_number && <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>{confirmFormErrors.cow_number}</div>}
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>Hissa Number <span style={{ color: '#dc2626' }}>*</span></label>
-                    <input value={confirmForm.hissa_number}
+                    <input value={confirmForm.order_type === 'Goat (Hissa)' ? '0' : confirmForm.hissa_number}
                       onChange={(e) => { setConfirmForm((p) => ({ ...p, hissa_number: e.target.value })); setConfirmDuplicateError(null); setConfirmFormErrors((p) => ({ ...p, hissa_number: undefined })); }}
                       onBlur={async () => { if (!confirmModalLead) return; const { cow_number: c, hissa_number: h, booking_date: bd, order_type: ot, day: d } = confirmForm; if (c && h && ot && !shouldSkip(ot, c, h)) { const dup = await checkDup(c, h, ot, d, bd); if (dup) setConfirmDuplicateError(dup); } }}
-                      placeholder="Auto-generated" style={miStyle(confirmFormErrors.hissa_number || confirmDuplicateError)} />
+                      placeholder="Auto-generated" style={miStyle(confirmFormErrors.hissa_number || confirmDuplicateError)} disabled={confirmForm.order_type === 'Goat (Hissa)'} />
                     {confirmFormErrors.hissa_number && <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>{confirmFormErrors.hissa_number}</div>}
                   </div>
                 </div>

@@ -103,7 +103,6 @@ const BOOKING_MENU_ITEMS = [
   { id: 'bm-queries', label: 'Query Management', iconDefault: '/icons/query_management_default.png', iconActive: '/icons/query_management_active.png', path: '/bookings/queries', permission: 'booking_management' },
   { id: 'bm-orders', label: 'Order Management', iconDefault: '/icons/order_management_default.png', iconActive: '/icons/order_management_active.png', path: '/bookings/orders', permission: 'booking_management' },
   { id: 'bm-transactions', label: 'Transactions', iconDefault: '/icons/transactions_default.png', iconActive: '/icons/transactions_active.png', path: '/bookings/transactions', permission: 'booking_management' },
-  { id: 'bm-expenses', label: 'Expenses', iconDefault: '/icons/expenses_default.png', iconActive: '/icons/expenses_active.png', path: '/bookings/expenses', permission: 'booking_management' },
 ];
 const OPERATIONS_MENU_ITEMS = [
   { id: 'op-riders', label: 'Rider Management', iconDefault: '/icons/order_management_default.png', iconActive: '/icons/order_management_active.png', path: '/operations/riders', permissionAny: ['operation_rider_management', 'operation_rider_management_supervisor'] },
@@ -130,7 +129,6 @@ const FARM_MENU_ITEMS = [
   { id: 'fm-new-order',  label: 'New Order',         iconDefault: '/icons/new_order_default.png',         iconActive: '/icons/new_order_active.png',         path: '/farm/new-order',        permission: 'farm_management' },
   { id: 'fm-queries',    label: 'Query Management',  iconDefault: '/icons/query_management_default.png',  iconActive: '/icons/query_management_active.png',  path: '/farm/query-management', permission: 'farm_management' },
   { id: 'fm-orders',     label: 'Order Management',  iconDefault: '/icons/order_management_default.png',  iconActive: '/icons/order_management_active.png',  path: '/farm/orders',           permission: 'farm_management' },
-  { id: 'fm-expenses',   label: 'Expenses',          iconDefault: '/icons/expenses_default.png',          iconActive: '/icons/expenses_active.png',          path: '/farm/expenses',         permission: 'farm_management' },
   { id: 'fm-transactions', label: 'Transactions',    iconDefault: '/icons/transactions_default.png',      iconActive: '/icons/transactions_active.png',      path: '/farm/transactions',     permission: 'farm_management' },
 ];
 
@@ -145,7 +143,6 @@ const PROCUREMENT_MENU_ITEMS = [
 
 const ACCOUNTING_MENU_ITEMS = [
   { id: 'acc-dashboard', label: 'Dashboard', iconDefault: '/icons/dashboard_default.png', iconActive: '/icons/dashboard_active.png', path: '/accounting/dashboard', permission: 'accounting_and_finance' },
-  { id: 'acc-transactions', label: 'Transactions', iconDefault: '/icons/transactions_default.png', iconActive: '/icons/transactions_active.png', path: '/accounting/transactions', permission: 'accounting_and_finance' },
   { id: 'acc-expenses', label: 'Expenses', iconDefault: '/icons/expenses_default.png', iconActive: '/icons/expenses_active.png', path: '/accounting/expenses', permission: 'accounting_and_finance' },
 ];
 

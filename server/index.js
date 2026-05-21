@@ -27,6 +27,7 @@ import { log, logError } from "./utils/logger.js";
 import { writeAuditLog } from "./utils/auditLog.js";
 import { sendLoginNotificationEmail } from "./utils/email.js";
 import { ensurePasswordResetTable } from "./utils/ensurePasswordResetTable.js";
+import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardRoutes.js";
 
 dotenv.config();
 
@@ -397,6 +398,7 @@ const startServer = async () => {
     registerControlRoutes(app, db, verifyToken);
     registerBookingRoutes(app, db, verifyToken);
     registerDashboardRoutes(app, db, verifyToken);
+    registerAccountingDashboardRoutes(app, db, verifyToken);
     registerFarmRoutes(app, db, verifyToken);
     registerNewQueryRoutes(app, db, verifyToken);
     registerPerformanceRoutes(app, db, verifyToken);

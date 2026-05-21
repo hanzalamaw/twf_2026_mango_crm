@@ -266,7 +266,7 @@ export default function Transactions() {
   useEffect(() => { setPage(1); }, [yearFilter, appliedTypes, debouncedSearch, paymentStatusFilter]);
 
   useEffect(() => {
-    if (!onHandAvailable) {
+    if (onHandAvailable) {
       setFilterMode('actual');
     }
   }, [onHandAvailable]);

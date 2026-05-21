@@ -149,10 +149,38 @@ function drawInvoiceTermsPage(doc, ctx) {
  * @param {Function} verifyToken - auth middleware
  */
 export const registerBookingRoutes = (app, db, verifyToken) => {
+  const GOAT_HISSA_TYPES = ["Goat (Hissa)", "Super Goat (Hissa)", "Premium Goat (Hissa)"];
   const normalizeOrderType = (value) => {
     const raw = String(value || "").trim();
     return raw === "Cow" ? "Fancy Cow" : raw;
   };
+  const isGoatHissaType = (orderType) => GOAT_HISSA_TYPES.includes(normalizeOrderType(orderType));
+  const normalizeGoatNumber = (value) => String(value || "").trim().toUpperCase();
+  const isValidGoatNumber = (value) => /^G[1-9]\d*$/.test(normalizeGoatNumber(value));
+  const normalizeHissaNumber = (value) => String(value ?? "").trim();
+
+  async function getNextAvailableGoatNumber(year, dayValue) {
+    const placeholders = GOAT_HISSA_TYPES.map(() => "?").join(",");
+    const [goatRows] = await db.execute(
+      `SELECT cow_number
+       FROM orders
+       WHERE order_type IN (${placeholders})
+         AND day = ?
+         AND (YEAR(booking_date) = ? OR booking_date IS NULL)
+         AND cow_number IS NOT NULL AND cow_number <> ''`,
+      [...GOAT_HISSA_TYPES, dayValue, year]
+    );
+
+    const used = new Set();
+    for (const row of goatRows) {
+      const m = normalizeGoatNumber(row.cow_number).match(/^G([1-9]\d*)$/);
+      if (m) used.add(Number(m[1]));
+    }
+
+    let next = 1;
+    while (used.has(next)) next += 1;
+    return `G${next}`;
+  }
   // Generate customer ID based on contact lookup
   app.post("/api/booking/generate-customer-id", verifyToken, async (req, res) => {
     try {
@@ -222,9 +250,12 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         "Cow": "C",
         "Fancy Cow": "C",
         "Goat (Hissa)": "G",
+        "Super Goat (Hissa)": "G",
+        "Premium Goat (Hissa)": "G",
         "Hissa - Standard": "S",
         "Hissa - Premium": "P",
         "Hissa - Waqf": "W",
+        "Hissa - Exclusive": "E",
         "Goat": "G",
       };
 
@@ -276,9 +307,17 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
       const year = booking_date ? (new Date(booking_date).getFullYear() || 2026) : 2026;
 
       // Only for Hissa types
-      const hissaTypes = ["Hissa - Standard", "Hissa - Premium", "Hissa - Waqf", "Goat (Hissa)"];
+      const hissaTypes = ["Hissa - Standard", "Hissa - Premium", "Hissa - Waqf", "Hissa - Exclusive", ...GOAT_HISSA_TYPES];
       if (!hissaTypes.includes(orderType)) {
         return res.json({ cow_number: "", hissa_number: "" });
+      }
+
+      if (isGoatHissaType(orderType)) {
+        if (!dayValue) {
+          return res.json({ cow_number: "", hissa_number: "0" });
+        }
+        const nextGoatNumber = await getNextAvailableGoatNumber(year, dayValue);
+        return res.json({ cow_number: nextGoatNumber, hissa_number: "0" });
       }
 
       // Get all used cow/hissa combinations for this order_type, day, and year
@@ -301,11 +340,13 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
       // Cows: S1, S2, S3, ... (Standard)
       // Premium: P1, P2, P3, ... (Premium)
       // Waqf: W1, W2, W3, ... (Waqf)
+      // Exclusive: E1, E2, E3, ... (Hissa - Exclusive)
       // Hissas: 1-7 per cow
       const prefixMap = {
         "Hissa - Premium": "P",
         "Hissa - Standard": "S",
         "Hissa - Waqf": "W",
+        "Hissa - Exclusive": "E",
       };
       
       const cowPrefix = prefixMap[orderType] || "";
@@ -342,73 +383,184 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
     }
   });
 
-  // Hissa stats sheet (for /stats page)
-  // Returns totals per cow/day/type (distinct hissa_number) and slot distribution (for row coloring).
-  app.get("/api/booking/hissa-sheet", verifyToken, async (req, res) => {
-    try {
-      const yearParam = parseInt(req.query.year, 10);
-      const year = Number.isFinite(yearParam) ? yearParam : 2026;
-      const days = ["DAY 1", "DAY 2", "DAY 3"];
-      const orderTypes = ["Hissa - Standard", "Hissa - Premium", "Hissa - Waqf"];
+  // Hissa + Goat stats sheet (for /stats page)
+// Returns:
+// - Hissa Standard/Premium/Waqf: cow-wise total hissa + slot distribution
+// - Goat (Hissa): goat-wise rows by day + slot
+app.get("/api/booking/hissa-sheet", verifyToken, async (req, res) => {
+  try {
+    const yearParam = parseInt(req.query.year, 10);
+    const year = Number.isFinite(yearParam) ? yearParam : 2026;
 
-      const [rows] = await db.execute(
-        `
-        SELECT
-          o.order_type,
-          o.day,
-          o.cow_number,
-          o.slot,
-          COUNT(DISTINCT o.hissa_number) AS total_hissa
-        FROM orders o
-        WHERE o.order_type IN (${orderTypes.map(() => "?").join(",")})
-          AND o.day IN (${days.map(() => "?").join(",")})
-          AND o.cow_number IS NOT NULL AND o.cow_number <> ''
-          AND o.hissa_number IS NOT NULL AND o.hissa_number <> ''
-          AND YEAR(o.booking_date) = ?
-        GROUP BY o.order_type, o.day, o.cow_number, o.slot
-        `,
-        [...orderTypes, ...days, year]
-      );
+    const days = ["DAY 1", "DAY 2", "DAY 3"];
 
-      const out = { year, days, order_types: orderTypes, types: {} };
+    const orderTypes = [
+      "Hissa - Standard",
+      "Hissa - Premium",
+      "Hissa - Waqf",
+        ...GOAT_HISSA_TYPES,
+    ];
 
-      for (const ot of orderTypes) {
-        out.types[ot] = {};
-        for (const d of days) out.types[ot][d] = {};
+    const normalizeDay = (value) => {
+      const s = String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+
+      if (s === "DAY1" || s === "1") return "DAY 1";
+      if (s === "DAY2" || s === "2") return "DAY 2";
+      if (s === "DAY3" || s === "3") return "DAY 3";
+
+      return null;
+    };
+
+    const normalizeSlot = (value) => {
+      const s = String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, " ");
+
+      if (s === "SLOT 1" || s === "SLOT1" || s === "1") return "SLOT 1";
+      if (s === "SLOT 2" || s === "SLOT2" || s === "2") return "SLOT 2";
+      if (s === "SLOT 3" || s === "SLOT3" || s === "3") return "SLOT 3";
+
+      return null;
+    };
+
+    const normalizeCow = (value) =>
+      String(value || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "");
+
+    const slotCounts = () => ({
+      "SLOT 1": 0,
+      "SLOT 2": 0,
+      "SLOT 3": 0,
+    });
+
+    const out = {
+      year,
+      days,
+      order_types: orderTypes,
+      types: {},
+    };
+
+    for (const ot of orderTypes) {
+      out.types[ot] = {};
+      for (const d of days) {
+        out.types[ot][d] = {};
       }
-
-      const slotOrder = ["SLOT 1", "SLOT 2", "SLOT 3"];
-      const normalizeSlot = (slot) => {
-        const s = String(slot || "").trim();
-        if (slotOrder.includes(s)) return s;
-        return null;
-      };
-
-      for (const r of rows) {
-        const ot = String(r.order_type || "").trim();
-        const d = String(r.day || "").trim();
-        const cow = String(r.cow_number || "").trim();
-        const slot = normalizeSlot(r.slot);
-        const count = Math.max(0, Number(r.total_hissa) || 0);
-
-        if (!out.types[ot] || !out.types[ot][d] || !cow) continue;
-
-        if (!out.types[ot][d][cow]) {
-          out.types[ot][d][cow] = {
-            total_hissa: 0,
-            slot_counts: { "SLOT 1": 0, "SLOT 2": 0, "SLOT 3": 0 },
-          };
-        }
-        out.types[ot][d][cow].total_hissa += count;
-        if (slot) out.types[ot][d][cow].slot_counts[slot] += count;
-      }
-
-      res.json(out);
-    } catch (error) {
-      logError("BOOKING", "Hissa sheet stats error", error);
-      res.status(500).json({ message: "Server error" });
     }
-  });
+
+    /**
+     * 1) Hissa cow stats
+     * Standard/Premium/Waqf are calculated by distinct hissa_number.
+     */
+    const hissaTypes = ["Hissa - Standard", "Hissa - Premium", "Hissa - Waqf"];
+
+    const [hissaRows] = await db.execute(
+      `
+      SELECT
+        o.order_type,
+        o.day,
+        o.cow_number,
+        o.slot,
+        COUNT(DISTINCT o.hissa_number) AS total_hissa
+      FROM orders o
+      WHERE o.order_type IN (${hissaTypes.map(() => "?").join(",")})
+        AND o.cow_number IS NOT NULL
+        AND TRIM(o.cow_number) <> ''
+        AND o.hissa_number IS NOT NULL
+        AND TRIM(o.hissa_number) <> ''
+        AND YEAR(o.booking_date) = ?
+      GROUP BY
+        o.order_type,
+        o.day,
+        o.cow_number,
+        o.slot
+      `,
+      [...hissaTypes, year]
+    );
+
+    for (const r of hissaRows) {
+      const orderType = String(r.order_type || "").trim();
+      const day = normalizeDay(r.day);
+      const cow = normalizeCow(r.cow_number);
+      const slot = normalizeSlot(r.slot);
+      const count = Math.max(0, Number(r.total_hissa) || 0);
+
+      if (!out.types[orderType] || !day || !out.types[orderType][day] || !cow) {
+        continue;
+      }
+
+      if (!out.types[orderType][day][cow]) {
+        out.types[orderType][day][cow] = {
+          total_hissa: 0,
+          slot_counts: slotCounts(),
+        };
+      }
+
+      out.types[orderType][day][cow].total_hissa += count;
+
+      if (slot) {
+        out.types[orderType][day][cow].slot_counts[slot] += count;
+      }
+    }
+
+    /**
+     * 2) Goat (Hissa) stats
+     * Goat is one complete animal/order, so each goat cow_number is counted as 1 row.
+     * hissa_number is normally 0, so we do NOT rely on distinct hissa_number.
+     */
+    const [goatRows] = await db.execute(
+      `
+      SELECT
+        o.order_id,
+        o.order_type,
+        o.day,
+        o.cow_number,
+        o.slot
+      FROM orders o
+      WHERE o.order_type IN (${GOAT_HISSA_TYPES.map(() => "?").join(",")})
+        AND o.cow_number IS NOT NULL
+        AND TRIM(o.cow_number) <> ''
+        AND YEAR(o.booking_date) = ?
+      ORDER BY
+        o.day ASC,
+        CAST(REGEXP_REPLACE(UPPER(TRIM(o.cow_number)), '[^0-9]', '') AS UNSIGNED) ASC,
+        o.created_at ASC
+      `,
+      [...GOAT_HISSA_TYPES, year]
+    );
+
+    for (const r of goatRows) {
+      const day = normalizeDay(r.day);
+      const goatNumber = normalizeCow(r.cow_number);
+      const slot = normalizeSlot(r.slot);
+
+      if (!day || !out.types["Goat (Hissa)"][day] || !goatNumber) {
+        continue;
+      }
+
+      if (!out.types["Goat (Hissa)"][day][goatNumber]) {
+        out.types["Goat (Hissa)"][day][goatNumber] = {
+          total_hissa: 1,
+          slot_counts: slotCounts(),
+        };
+      }
+
+      if (slot) {
+        out.types["Goat (Hissa)"][day][goatNumber].slot_counts[slot] += 1;
+      }
+    }
+
+    res.json(out);
+  } catch (error) {
+    logError("BOOKING", "Hissa/goat sheet stats error", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
 
   // Check if cow/hissa combination already exists
   app.post("/api/booking/check-cow-hissa", verifyToken, async (req, res) => {
@@ -424,20 +576,34 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
       const orderType = normalizeOrderType(order_type);
       const dayValue = day ? String(day).trim() : null;
       const year = booking_date ? (new Date(booking_date).getFullYear() || 2026) : 2026;
+      if (isGoatHissaType(orderType)) {
+        if (!isValidGoatNumber(cowNum)) {
+          return res.status(400).json({ message: "Goat number must be in G1, G2 format" });
+        }
+        if (normalizeHissaNumber(hissaNum) !== "0") {
+          return res.status(400).json({ message: "Hissa number must be 0 for Goat (Hissa)" });
+        }
+      }
 
       let query = `
-        SELECT order_id, booking_name, shareholder_name, contact 
-        FROM orders 
-        WHERE cow_number = ? AND hissa_number = ? AND order_type = ?
+        SELECT order_id, booking_name, shareholder_name, contact
+        FROM orders
+        WHERE cow_number = ? AND hissa_number = ?
         AND (YEAR(booking_date) = ? OR booking_date IS NULL)
       `;
-      const params = [cowNum, hissaNum, orderType, year];
+      const params = [cowNum, hissaNum, year];
+      if (isGoatHissaType(orderType)) {
+        query += ` AND order_type IN (${GOAT_HISSA_TYPES.map(() => "?").join(",")})`;
+        params.push(...GOAT_HISSA_TYPES);
+      } else {
+        query += " AND order_type = ?";
+        params.push(orderType);
+      }
 
       if (dayValue) {
         query += " AND day = ?";
         params.push(dayValue);
       }
-
       // Exclude current order_id if editing
       if (order_id) {
         query += " AND order_id != ?";
@@ -510,6 +676,24 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         return res.status(400).json({ message: "Order ID already exists" });
       }
 
+      const normalizedOrderType = normalizeOrderType(order_type);
+      let finalCowNumber = cow_number != null && String(cow_number).trim() !== "" ? String(cow_number).trim() : null;
+      let finalHissaNumber = hissa_number != null && String(hissa_number).trim() !== "" ? String(hissa_number).trim() : null;
+      if (isGoatHissaType(normalizedOrderType)) {
+        finalCowNumber = normalizeGoatNumber(finalCowNumber);
+        finalHissaNumber = "0";
+        if (!isValidGoatNumber(finalCowNumber)) {
+          return res.status(400).json({ message: "Goat number must be in G1, G2 format" });
+        }
+      }
+
+      if (normalizedOrderType === "Hissa - Exclusive") {
+        finalCowNumber = String(finalCowNumber || "").trim().toUpperCase();
+        if (!/^E[1-9]\d*$/.test(finalCowNumber || "")) {
+          return res.status(400).json({ message: "Cow number must be E1, E2, … format for Hissa - Exclusive" });
+        }
+      }
+
       const totalAmount = Math.max(0, Number(total_amount) || 0);
       const receivedAmount = 0;
       const pendingAmount = totalAmount;
@@ -525,11 +709,11 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
           order_id,
           customer_id,
           contact,
-          normalizeOrderType(order_type),
+          normalizedOrderType,
           booking_name || null,
           shareholder_name || null,
-          cow_number || null,
-          hissa_number || null,
+          finalCowNumber || null,
+          finalHissaNumber || null,
           alt_contact || null,
           address || null,
           area || null,
@@ -558,8 +742,8 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
           order_type,
           booking_name,
           shareholder_name,
-          cow_number: cow_number || null,
-          hissa_number: hissa_number || null,
+          cow_number: finalCowNumber || null,
+          hissa_number: finalHissaNumber || null,
           alt_contact: alt_contact || null,
           address: address || null,
           area: area || null,
@@ -607,6 +791,7 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         payment_status,
         source,
         omit_hidden_types,
+        farm_order_management,
       } = req.query;
       const conditions = [];
       const params = [];
@@ -634,7 +819,25 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         params.push(slot);
       }
       const orderTypesRaw = Array.isArray(order_type) ? order_type : order_type ? [order_type] : [];
-      const orderTypes = orderTypesRaw.map((t) => normalizeOrderType(t));
+      let orderTypes = orderTypesRaw.map((t) => normalizeOrderType(t));
+
+      // Farm Order Management only:
+      // - DB may contain old rows as order_type = 'Cow' and new rows as 'Fancy Cow'.
+      // - Frontend should display both as 'Fancy Cow'.
+      // - Goat must remain exact 'Goat' only, not Goat (Hissa).
+      if (farm_order_management === "1") {
+        const expanded = new Set();
+        for (const type of orderTypes) {
+          if (type === "Fancy Cow") {
+            expanded.add("Fancy Cow");
+            expanded.add("Cow");
+          } else if (type === "Goat") {
+            expanded.add("Goat");
+          }
+        }
+        orderTypes = Array.from(expanded);
+      }
+
       if (orderTypes.length > 0) {
         conditions.push(`o.order_type IN (${orderTypes.map(() => "?").join(",")})`);
         params.push(...orderTypes);
@@ -765,7 +968,7 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
 
   app.get("/api/booking/orders/filters", verifyToken, async (req, res) => {
     try {
-      const { year } = req.query;
+      const { year, source } = req.query;
       const conditions = [];
       const params = [];
       if (year === "2026" || year === "2025") {
@@ -773,6 +976,9 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         params.push(year);
       } else if (year === "2024") {
         conditions.push("(booking_date IS NULL OR YEAR(booking_date) < 2025)");
+      }
+      if (source === "Farm") {
+        conditions.push("TRIM(COALESCE(order_source, '')) = 'Farm'");
       }
       const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       const andOrWhere = whereClause ? " AND " : " WHERE ";
@@ -1085,6 +1291,13 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         cowNumber = "0";
         hissaNumber = "0";
       }
+      if (isGoatHissaType(orderType)) {
+        cowNumber = normalizeGoatNumber(cowNumber);
+        hissaNumber = "0";
+        if (!isValidGoatNumber(cowNumber)) {
+          return res.status(400).json({ message: "Goat number must be in G1, G2 format" });
+        }
+      }
 
       await db.execute(
         `INSERT INTO orders (order_id, customer_id, contact, order_type, booking_name, shareholder_name, cow_number, hissa_number, alt_contact, address, area, day, booking_date, total_amount, received_amount, pending_amount, order_source, reference, closed_by, description, rider_id, slot)
@@ -1211,21 +1424,53 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
   });
 
   // List booking expenses (for Expenses page, paginated)
-  app.get("/api/booking/expenses", verifyToken, async (req, res) => {
+  app.get(["/api/booking/expenses", "/api/farm/expenses"], verifyToken, async (req, res) => {
     try {
+      const isFarm = req.path.startsWith("/api/farm");
+      const tableName = isFarm ? "farm_expenses" : "booking_expenses";
+      const logScope = isFarm ? "FARM" : "BOOKING";
+  
       const { page = 1, limit = 50 } = req.query;
+  
       const pageNum = Math.max(1, parseInt(page, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
       const offset = (pageNum - 1) * limitNum;
-      const [countRows] = await db.execute("SELECT COUNT(*) AS total FROM booking_expenses");
-      const total = Number(countRows[0]?.total ?? 0);
-      const [rows] = await db.execute(
-        `SELECT expense_id, bank, cash, total, done_at, description, done_by, created_by FROM booking_expenses ORDER BY done_at DESC ${limitOffsetClause(limitNum, offset, { maxLimit: 100, defaultLimit: 50 })}`
+  
+      const [countRows] = await db.execute(
+        `SELECT COUNT(*) AS total FROM ${tableName}`
       );
-      const expenses = rows.map((r) => ({ ...r, done_at: toDateOnly(r.done_at) ?? r.done_at }));
+  
+      const total = Number(countRows[0]?.total ?? 0);
+  
+      const [rows] = await db.execute(
+        `
+        SELECT
+          e.expense_id,
+          e.bank,
+          e.cash,
+          e.total,
+          e.done_at,
+          e.description,
+          e.done_by,
+          e.created_by AS created_by_id,
+          COALESCE(u.username, e.created_by) AS created_by,
+          COALESCE(u.username, e.created_by) AS created_by_name
+        FROM ${tableName} e
+        LEFT JOIN users u
+          ON u.user_id = e.created_by
+        ORDER BY e.done_at DESC
+        ${limitOffsetClause(limitNum, offset, { maxLimit: 100, defaultLimit: 50 })}
+        `
+      );
+  
+      const expenses = rows.map((r) => ({
+        ...r,
+        done_at: toDateOnly(r.done_at) ?? r.done_at,
+      }));
+  
       res.json({ data: expenses, total });
     } catch (error) {
-      logError("BOOKING", "Expenses list error", error);
+      logError("EXPENSES", "Expenses list error", error);
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -1976,8 +2221,8 @@ if (Array.isArray(order_ids) && order_ids.length > 0) {
         .text("The Warsi Farm", fromX, topY + 24, { lineBreak: false });
 
       doc.font("Helvetica").fontSize(10.5).fillColor(C_SUB)
-        .text("B-655, Gulberg, F.B Area Block", fromX, topY + 46, { lineBreak: false })
-        .text("# 13, Karachi", fromX, topY + 62, { lineBreak: false })
+        .text("D-63, Block # H, North", fromX, topY + 46, { lineBreak: false })
+        .text("Nazimabad, Karachi", fromX, topY + 62, { lineBreak: false })
         .text("Contact: 0331-9911466", fromX, topY + 80, { lineBreak: false });
 
       // --- TO column (full text, wraps — no ellipsis) ---
@@ -2064,25 +2309,58 @@ if (Array.isArray(order_ids) && order_ids.length > 0) {
         doc.roundedRect(ML, rowY, CW, ITEM_H, 4)
           .fillColor(C_BG).fill();
 
-        // Description: order type + shareholder (medium) + cow/hissa
-        const displayType = (row.type === "Hissa - Standard") ? "Hissa - Ijtimai" : (row.type || "Hissa");
-        const itemTitle = truncate(`${displayType} (${row.day || "1"})`, 190, "Helvetica-Bold", 11);
+        // Description: invoice-only display labels.
+        // Farm animal orders should show simple animal labels only and hide cow/hissa numbers.
+        // Booking Goat (Hissa) orders are relabelled by exact package price.
+        const normalizedRowType = String(row.type || "").trim();
+        const rowTotalAmount = Number(row.total_amount || 0);
+        const isFarmAnimalOrder = normalizedRowType === "Fancy Cow" || normalizedRowType === "Cow" || normalizedRowType === "Goat";
+        const isGoatHissaOrder = normalizedRowType === "Goat (Hissa)";
+        const isSuperGoatHissa = normalizedRowType === "Super Goat (Hissa)" || (isGoatHissaOrder && rowTotalAmount === 51000);
+        const isPremiumGoatHissa = normalizedRowType === "Premium Goat (Hissa)" || (isGoatHissaOrder && rowTotalAmount === 59000);
+        const isSuperOrPremiumGoatInvoice = isSuperGoatHissa || isPremiumGoatHissa;
+
+        let displayType = normalizedRowType || "Hissa";
+        if (normalizedRowType === "Hissa - Standard") {
+          displayType = "Hissa - Ijtimai";
+        } else if (normalizedRowType === "Fancy Cow" || normalizedRowType === "Cow") {
+          displayType = "Cow";
+        } else if (normalizedRowType === "Goat") {
+          displayType = "Goat";
+        } else if (isSuperGoatHissa) {
+          displayType = "Super Goat (Hissa)";
+        } else if (isPremiumGoatHissa) {
+          displayType = "Premium Goat (Hissa)";
+        }
+
+        const itemTitle = truncate(`${displayType}${isFarmAnimalOrder ? "" : ` (${row.day || "1"})`}`, 190, "Helvetica-Bold", 11);
         const shareholderLine = truncate(
           `${row.shareholder_name || "—"}`,
           190,
           "Helvetica",
           10
         );
-        const showCowHissa = row.type !== "Goat (Hissa)";
-        const itemSub = showCowHissa ? `Cow: ${row.cow || "—"} | Hissa: ${row.hissa || "—"}` : "";
+        const itemSub = isFarmAnimalOrder
+          ? ""
+          : isSuperOrPremiumGoatInvoice
+            ? `Goat Number: ${row.cow || "—"}`
+            : isGoatHissaOrder
+              ? `Goat Number: ${row.cow || "—"}`
+              : `Cow: ${row.cow || "—"} | Hissa: ${row.hissa || "—"}`;
 
-        doc.font("Helvetica-Bold").fontSize(11).fillColor("#1a1a1a")
-          .text(itemTitle, COL_DESC, rowY + 7, { lineBreak: false });
-        doc.font("Helvetica").fontSize(10).fillColor("#4a4a4a")
-          .text(shareholderLine, COL_DESC, rowY + 22, { lineBreak: false });
-        if (itemSub) {
-          doc.font("Helvetica").fontSize(9.5).fillColor("#5f5f5f")
-            .text(itemSub, COL_DESC, rowY + 36, { lineBreak: false });
+        if (isFarmAnimalOrder) {
+          // Farm invoice rows show only the animal label, vertically centred in the gray row.
+          doc.font("Helvetica-Bold").fontSize(11).fillColor("#1a1a1a")
+            .text(itemTitle, COL_DESC, rowY + 19, { lineBreak: false });
+        } else {
+          doc.font("Helvetica-Bold").fontSize(11).fillColor("#1a1a1a")
+            .text(itemTitle, COL_DESC, rowY + 7, { lineBreak: false });
+          doc.font("Helvetica").fontSize(10).fillColor("#4a4a4a")
+            .text(shareholderLine, COL_DESC, rowY + 22, { lineBreak: false });
+          if (itemSub) {
+            doc.font("Helvetica").fontSize(9.5).fillColor("#5f5f5f")
+              .text(itemSub, COL_DESC, rowY + 36, { lineBreak: false });
+          }
         }
 
         // Quantity — vertically centred in row with description block

@@ -29,6 +29,10 @@ function formatDate(val) {
   return s;
 }
 
+function displayCreatedBy(row) {
+  return row?.created_by_name || row?.createdByName || row?.creator_name || row?.creatorName || row?.created_by || '—';
+}
+
 export default function Expenses() {
   const [summary, setSummary] = useState(null);
   const [expenses, setExpenses] = useState([]);
@@ -254,6 +258,7 @@ export default function Expenses() {
         const val = row[col.key];
         if (['bank', 'cash', 'total'].includes(col.key)) { const n = Number(val); return Number.isFinite(n) ? n : (val ?? ''); }
         if (col.key === 'done_at') return formatDate(val);
+        if (col.key === 'created_by') return displayCreatedBy(row);
         return val != null ? String(val) : '—';
       })
     );
@@ -475,7 +480,13 @@ export default function Expenses() {
                       </td>
                       {EXPENSE_COLUMNS.map((col) => (
                         <td key={col.key} style={{ padding: '8px', textAlign: ['bank', 'cash', 'total'].includes(col.key) ? 'right' : 'left', whiteSpace: 'nowrap' }}>
-                          {['bank', 'cash', 'total'].includes(col.key) ? formatAmount(row[col.key]) : col.key === 'done_at' ? formatDate(row[col.key]) : (row[col.key] != null ? String(row[col.key]) : '—')}
+                          {['bank', 'cash', 'total'].includes(col.key)
+                            ? formatAmount(row[col.key])
+                            : col.key === 'done_at'
+                              ? formatDate(row[col.key])
+                              : col.key === 'created_by'
+                                ? displayCreatedBy(row)
+                                : (row[col.key] != null ? String(row[col.key]) : '—')}
                         </td>
                       ))}
                       <td style={{ padding: '8px', textAlign: 'center', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>

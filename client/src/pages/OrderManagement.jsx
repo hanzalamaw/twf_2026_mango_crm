@@ -139,9 +139,21 @@ export default function OrderManagement() {
   const token = localStorage.getItem('token');
   const location = useLocation();
   const isFarm = location.pathname.startsWith('/farm');
+  // Farm view must show DB order_type 'Cow' and 'Fancy Cow' as 'Fancy Cow', plus exact 'Goat'.
+  // Backend expands Fancy Cow to include legacy Cow only when farm_order_management=1.
+  const FARM_ORDER_TYPES = ['Fancy Cow', 'Goat'];
   const visibleOrderTypes = (filters.order_types || []).filter((t) => (
-    isFarm ? ['Fancy Cow', 'Goat'].includes(t) : !HIDDEN_TYPES_BOOKING.includes(t)
+    isFarm ? FARM_ORDER_TYPES.includes(t) : !HIDDEN_TYPES_BOOKING.includes(t)
   ));
+  const applyFarmOrderScope = (params) => {
+    if (!isFarm) return;
+    params.set('farm_order_management', '1');
+    if (orderType) {
+      params.set('order_type', orderType);
+      return;
+    }
+    FARM_ORDER_TYPES.forEach((type) => params.append('order_type', type));
+  };
   const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
 
   /* ── fetch ── */
@@ -153,7 +165,7 @@ export default function OrderManagement() {
       const res = await authFetch(url);
       if (res.ok) { const data = await res.json(); setFilters(data); }
     } catch (e) { console.error(e); }
-  }, [authFetch, yearFilter]);
+  }, [authFetch, yearFilter, isFarm]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true); setError('');
@@ -165,10 +177,14 @@ export default function OrderManagement() {
         if (day)              params.set('day',         day);
         if (cowNumber.trim()) params.set('cow_number',  cowNumber.trim());
       }
-      if (orderType)          params.set('order_type',  orderType);
+      if (isFarm) {
+        applyFarmOrderScope(params);
+      } else {
+        if (orderType)        params.set('order_type',  orderType);
+        params.set('omit_hidden_types', '1');
+      }
       if (reference)          params.set('reference',   reference);
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
-      if (!isFarm) params.set('omit_hidden_types', '1');
       params.set('page',  String(page));
       params.set('limit', String(PAGE_SIZE));
       const res = await authFetch(`${API}/booking/orders?${params}`);
@@ -178,12 +194,12 @@ export default function OrderManagement() {
         const total = typeof json.total === 'number' ? json.total : (data?.length ?? 0);
         const filtered = (Array.isArray(data) ? data : []).filter((r) => {
           if (isFarm) {
-            return ['Fancy Cow', 'Goat'].includes(r.type);
+            return FARM_ORDER_TYPES.includes(r.type);
           }
           return !HIDDEN_TYPES_BOOKING.includes(r.type);
         });
         setOrders(filtered);
-        setTotalCount(isFarm ? filtered.length : total);
+        setTotalCount(total);
       } else { setError('Failed to load orders'); }
     } catch (e) { setError('Failed to load orders'); }
     finally { setLoading(false); }
@@ -193,18 +209,21 @@ export default function OrderManagement() {
   useEffect(() => { setPage(1); }, [search, slot, orderType, day, reference, cowNumber, yearFilter]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  const shouldSkipCowHissaDup = (type, c, h) => {
+  const GOAT_NUMBER_PATTERN = /^G[1-9]\d*$/;
+  const shouldSkipCowHissaDup = (type, c) => {
     if (type !== 'Goat (Hissa)') return false;
-    const cv = String(c ?? '').trim(); const hv = String(h ?? '').trim();
-    return (cv === '0' || cv === '') && (hv === '0' || hv === '');
+    const cv = String(c ?? '').trim().toUpperCase();
+    return !GOAT_NUMBER_PATTERN.test(cv);
   };
 
   const checkCowHissaDuplicate = useCallback(async (c, h, type, d, bd, excludeId) => {
-    if (!c || !h || !type || !token || shouldSkipCowHissaDup(type, c, h)) return null;
+    if (!c || !h || !type || !token || shouldSkipCowHissaDup(type, c)) return null;
     try {
+      const cowNorm = type === 'Goat (Hissa)' ? String(c).trim().toUpperCase() : String(c).trim();
+      const hissaNorm = type === 'Goat (Hissa)' ? '0' : String(h).trim();
       const res = await authFetch(`${API}/booking/check-cow-hissa`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cow_number: c, hissa_number: h, order_type: type, day: d || null, booking_date: bd || null }),
+        body: JSON.stringify({ cow_number: cowNorm, hissa_number: hissaNorm, order_type: type, day: d || null, booking_date: bd || null }),
       });
       if (res.ok) { const d2 = await res.json(); if (d2.exists && d2.order_id !== excludeId) return d2; }
     } catch (e) { console.error(e); }
@@ -214,10 +233,10 @@ export default function OrderManagement() {
   useEffect(() => {
     if (!editOpen || isFarm) return;
     const { cow, hissa, type, day: d, booking_date: bd, order_id } = editRow || {};
-    if (!(cow || '').trim() || !(hissa || '').trim() || !type || shouldSkipCowHissaDup(type, cow, hissa)) { setEditDuplicateError(null); return; }
+    if (!(cow || '').trim() || !type || shouldSkipCowHissaDup(type, cow)) { setEditDuplicateError(null); return; }
     if (editDuplicateCheckTimeoutRef.current) clearTimeout(editDuplicateCheckTimeoutRef.current);
     editDuplicateCheckTimeoutRef.current = setTimeout(async () => {
-      const dup = await checkCowHissaDuplicate(String(cow).trim(), String(hissa).trim(), type, d, bd, order_id);
+      const dup = await checkCowHissaDuplicate(String(cow).trim(), String(hissa ?? '').trim(), type, d, bd, order_id);
       setEditDuplicateError(dup || null);
       editDuplicateCheckTimeoutRef.current = null;
     }, 400);
@@ -298,10 +317,14 @@ export default function OrderManagement() {
           if (day) params.set('day', day);
           if (cowNumber?.trim()) params.set('cow_number', cowNumber.trim());
         }
-        if (orderType) params.set('order_type', orderType);
+        if (isFarm) {
+          applyFarmOrderScope(params);
+        } else {
+          if (orderType) params.set('order_type', orderType);
+          params.set('omit_hidden_types', '1');
+        }
         if (reference) params.set('reference', reference);
         if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
-        if (!isFarm) params.set('omit_hidden_types', '1');
         params.set('page', String(pageNum));
         params.set('limit', String(limit));
         const res = await authFetch(`${API}/booking/orders?${params}`);
@@ -310,7 +333,7 @@ export default function OrderManagement() {
         const data = Array.isArray(json) ? json : json.data;
         const rawChunk = Array.isArray(data) ? data : [];
         const chunk = rawChunk.filter((r) =>
-          isFarm ? ['Fancy Cow', 'Goat'].includes(r.type) : !HIDDEN_TYPES_BOOKING.includes(r.type)
+          isFarm ? FARM_ORDER_TYPES.includes(r.type) : !HIDDEN_TYPES_BOOKING.includes(r.type)
         );
         allOrders = allOrders.concat(chunk);
         if (rawChunk.length < limit) break;

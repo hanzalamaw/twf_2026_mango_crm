@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 // Modal Component - defined outside to prevent recreation on each render
 const Modal = ({ show, onClose, children, title, hasAnimated, maxWidth = '550px' }) => {
@@ -682,13 +682,13 @@ const Control = () => {
             {TAB_LABELS[tab]}
           </button>
         ))}
-        {/* Back to main */}
-        <a href="http://localhost:5173/" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fafafa', color: '#555', fontSize: '10px', fontWeight: '500', textDecoration: 'none', whiteSpace: 'nowrap', transition: 'all 0.2s' }}
+        {/* Back to app home */}
+        <Link to="/" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 12px', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fafafa', color: '#555', fontSize: '10px', fontWeight: '500', textDecoration: 'none', whiteSpace: 'nowrap', transition: 'all 0.2s' }}
           onMouseEnter={(e) => { e.currentTarget.style.background = '#F5F5F5'; e.currentTarget.style.color = '#333'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = '#fafafa'; e.currentTarget.style.color = '#555'; }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
           Management
-        </a>
+        </Link>
       </div>
 
       {/* Content */}
@@ -960,8 +960,8 @@ const Control = () => {
 
         <div style={{ width: '1px', background: '#f0f0f0', margin: '10px 0' }} />
 
-        <a
-          href="http://localhost:5173/"
+        <Link
+          to="/"
           style={{
             flex: 1,
             display: 'flex',
@@ -979,7 +979,7 @@ const Control = () => {
             <polyline points="9 22 9 12 15 12 15 22"/>
           </svg>
           <span style={{ fontSize: '10px', fontWeight: '400', color: '#9ca3af', lineHeight: 1 }}>Home</span>
-        </a>
+        </Link>
       </nav>
 
       {/* ── User Modal ── */}
