@@ -2,13 +2,16 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { API_BASE as API } from '../config/api';
 
-const ORDER_TYPES = [
+const HISSA_ORDER_TYPES = [
   'Hissa - Standard',
   'Hissa - Premium',
   'Hissa - Waqf',
   'Hissa - Exclusive',
+];
+const GOAT_HISSA_SUBTYPES = [
   'Super Goat (Hissa)',
   'Premium Goat (Hissa)',
+  'Exclusive Goat (Hissa)',
 ];
 const FARM_ORDER_TYPES = ['Fancy Cow', 'Goat'];
 const ORDER_SOURCES = ['Tele-Sales', 'Social Media (Organic)', 'Social Media (Ads)', 'Previous Customer', 'Website', 'Reference', 'Farm', 'International Calling'];
@@ -25,14 +28,13 @@ const EMPTY_FORM = {
 };
 const GOAT_NUMBER_PATTERN = /^G[1-9]\d*$/;
 const EXCLUSIVE_COW_PATTERN = /^E[1-9]\d*$/;
-const BOOKING_GOAT_TYPES = ['Goat (Hissa)', 'Super Goat (Hissa)', 'Premium Goat (Hissa)'];
+const BOOKING_GOAT_TYPES = ['Goat (Hissa)', 'Super Goat (Hissa)', 'Premium Goat (Hissa)', 'Exclusive Goat (Hissa)'];
 
 const NewOrder = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isFarm = location.pathname.startsWith('/farm');
   const slotOptions = isFarm ? FARM_SLOTS : BOOKING_SLOTS;
-  const orderTypes = isFarm ? FARM_ORDER_TYPES : ORDER_TYPES;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -154,6 +156,7 @@ const NewOrder = () => {
     'Hissa - Exclusive': '49000',
     'Super Goat (Hissa)': '51000',
     'Premium Goat (Hissa)': '59000',
+    'Exclusive Goat (Hissa)': '49000',
   })[t] || '';
 
   const handleOrderTypeChange = (e) => {
@@ -436,7 +439,16 @@ const NewOrder = () => {
                 <select className="no-input" value={formData.order_type} onChange={handleOrderTypeChange} required style={inputStyle}
                   onFocus={(e) => (e.target.style.borderColor = '#FF5722')} onBlur={(e) => (e.target.style.borderColor = '#e0e0e0')}>
                   <option value="" disabled>Select Order Type</option>
-                  {orderTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                  {isFarm ? (
+                    FARM_ORDER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)
+                  ) : (
+                    <>
+                      {HISSA_ORDER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      <optgroup label="Goat (Hissa)">
+                        {GOAT_HISSA_SUBTYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </optgroup>
+                    </>
+                  )}
                 </select>
               </div>
               <div>

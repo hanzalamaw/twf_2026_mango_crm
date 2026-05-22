@@ -149,7 +149,7 @@ function drawInvoiceTermsPage(doc, ctx) {
  * @param {Function} verifyToken - auth middleware
  */
 export const registerBookingRoutes = (app, db, verifyToken) => {
-  const GOAT_HISSA_TYPES = ["Goat (Hissa)", "Super Goat (Hissa)", "Premium Goat (Hissa)"];
+  const GOAT_HISSA_TYPES = ["Goat (Hissa)", "Super Goat (Hissa)", "Premium Goat (Hissa)", "Exclusive Goat (Hissa)"];
   const normalizeOrderType = (value) => {
     const raw = String(value || "").trim();
     return raw === "Cow" ? "Fancy Cow" : raw;
@@ -252,6 +252,7 @@ export const registerBookingRoutes = (app, db, verifyToken) => {
         "Goat (Hissa)": "G",
         "Super Goat (Hissa)": "G",
         "Premium Goat (Hissa)": "G",
+        "Exclusive Goat (Hissa)": "G",
         "Hissa - Standard": "S",
         "Hissa - Premium": "P",
         "Hissa - Waqf": "W",
@@ -2318,7 +2319,8 @@ if (Array.isArray(order_ids) && order_ids.length > 0) {
         const isGoatHissaOrder = normalizedRowType === "Goat (Hissa)";
         const isSuperGoatHissa = normalizedRowType === "Super Goat (Hissa)" || (isGoatHissaOrder && rowTotalAmount === 51000);
         const isPremiumGoatHissa = normalizedRowType === "Premium Goat (Hissa)" || (isGoatHissaOrder && rowTotalAmount === 59000);
-        const isSuperOrPremiumGoatInvoice = isSuperGoatHissa || isPremiumGoatHissa;
+        const isExclusiveGoatHissa = normalizedRowType === "Exclusive Goat (Hissa)" || (isGoatHissaOrder && rowTotalAmount === 49000);
+        const isSuperOrPremiumGoatInvoice = isSuperGoatHissa || isPremiumGoatHissa || isExclusiveGoatHissa;
 
         let displayType = normalizedRowType || "Hissa";
         if (normalizedRowType === "Hissa - Standard") {
@@ -2331,6 +2333,8 @@ if (Array.isArray(order_ids) && order_ids.length > 0) {
           displayType = "Super Goat (Hissa)";
         } else if (isPremiumGoatHissa) {
           displayType = "Premium Goat (Hissa)";
+        } else if (isExclusiveGoatHissa) {
+          displayType = "Exclusive Goat (Hissa)";
         }
 
         const itemTitle = truncate(`${displayType}${isFarmAnimalOrder ? "" : ` (${row.day || "1"})`}`, 190, "Helvetica-Bold", 11);

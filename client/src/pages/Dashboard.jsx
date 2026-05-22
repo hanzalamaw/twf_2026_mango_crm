@@ -21,6 +21,7 @@ const FIXED_TYPES_BOOKING = [
 const BOOKING_GOAT_CHILDREN = [
   { key: "super_goat", label: "Super Goat (Hissa)" },
   { key: "premium_goat", label: "Premium Goat (Hissa)" },
+  { key: "exclusive_goat", label: "Exclusive Goat (Hissa)" },
 ];
 
 const FIXED_TYPES_FARM = [
@@ -113,7 +114,7 @@ const SEGMENT_COLORS = {
   premium:  { fill: "#FF5722" }, standard: { fill: "#2196F3" },
   waqf:     { fill: "#4CAF50" }, exclusive: { fill: "#9333EA" },
   goat:     { fill: "#FF9800" },
-  super_goat: { fill: "#f59e0b" }, premium_goat: { fill: "#d97706" },
+  super_goat: { fill: "#f59e0b" }, premium_goat: { fill: "#d97706" }, exclusive_goat: { fill: "#9333EA" },
   cow:      { fill: "#3B82F6" },
   farm_goat:{ fill: "#10B981" },
   remaining:{ fill: "#EAEAEA" },
@@ -323,11 +324,11 @@ const TargetAchievement = ({ achieved, target, breakdown, goatChildren = [] }) =
 
 /* ── Day Wise ── */
 /*
-  Column order: Standard | Premium | Waqf | Exclusive | Total | Super Goat | Premium Goat | Goat Total
+  Column order: Standard | Premium | Waqf | Exclusive | Total | Super Goat | Premium Goat | Exclusive Goat | Goat Total
   Total = Standard + Premium + Waqf + Exclusive (goat categories are NOT included)
   The toggle has NO effect here.
 */
-const DAY_WISE_GOAT_HEADERS = ["Super Goat", "Premium Goat", "Goat Total"];
+const DAY_WISE_GOAT_HEADERS = ["Super Goat", "Premium Goat", "Exclusive Goat", "Goat Total"];
 const DayWiseSummary = ({ days, includeExclusiveDayColumn = false }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [highlightRow, setHighlightRow] = useState(null);
@@ -339,7 +340,7 @@ const DayWiseSummary = ({ days, includeExclusiveDayColumn = false }) => {
   const hissaLabels = includeExclusiveDayColumn
     ? ["Standard", "Premium", "Waqf", "Exclusive"]
     : ["Standard", "Premium", "Waqf"];
-  const goatKeys = ["super_goat", "premium_goat"];
+  const goatKeys = ["super_goat", "premium_goat", "exclusive_goat"];
   const colLabels = [...hissaLabels, "Total", ...DAY_WISE_GOAT_HEADERS];
 
   const isGoatCol = (col) => DAY_WISE_GOAT_HEADERS.includes(col);
@@ -402,7 +403,7 @@ const DayWiseSummary = ({ days, includeExclusiveDayColumn = false }) => {
                           </td>
                         ))}
                         <td className="dayWiseCell dayWiseCellTotal dayWiseGoatCol">
-                          {renderCell((Number(row.super_goat || 0) + Number(row.premium_goat || 0)))}
+                          {renderCell((Number(row.super_goat || 0) + Number(row.premium_goat || 0) + Number(row.exclusive_goat || 0)))}
                         </td>
                       </React.Fragment>
                     );
@@ -526,6 +527,7 @@ const AREA_TYPE_SUFFIXES = [
   { suf: "exc", label: "Hissa - Exclusive", sumKey: "sum_exc" },
   { suf: "sg", label: "Super Goat (Hissa)", sumKey: "sum_sg" },
   { suf: "pg", label: "Premium Goat (Hissa)", sumKey: "sum_pg" },
+  { suf: "eg", label: "Exclusive Goat (Hissa)", sumKey: "sum_eg" },
 ];
 
 const DAY_FILTER_TO_DCODE = { day1: "d1", day2: "d2", day3: "d3" };

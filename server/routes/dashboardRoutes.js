@@ -9,6 +9,7 @@ const TYPES = {
   goat: "Goat (Hissa)",
   super_goat: "Super Goat (Hissa)",
   premium_goat: "Premium Goat (Hissa)",
+  exclusive_goat: "Exclusive Goat (Hissa)",
 };
 
 /**
@@ -42,6 +43,7 @@ const TYPE_KEY_SQL = `
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('hissaexclusive') THEN 'exclusive'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('supergoathissa') THEN 'super_goat'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('premiumgoathissa') THEN 'premium_goat'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('exclusivegoathissa') THEN 'exclusive_goat'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('goathissa') THEN 'goat'
     ELSE NULL
   END
@@ -79,6 +81,7 @@ const AREA_TYPE_GRID_META = (() => {
     { key: "exclusive", as: "exc" },
     { key: "super_goat", as: "sg" },
     { key: "premium_goat", as: "pg" },
+    { key: "exclusive_goat", as: "eg" },
   ];
   const dayCode = { day1: "d1", day2: "d2", day3: "d3" };
   const slotCode = { slot1: "s1", slot2: "s2", slot3: "s3" };
@@ -106,6 +109,7 @@ const LEAD_TYPE_KEY_SQL = `
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(l.order_type),' ',''),'-',''),'(',''),')','') IN ('hissaexclusive') THEN 'exclusive'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(l.order_type),' ',''),'-',''),'(',''),')','') IN ('supergoathissa') THEN 'super_goat'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(l.order_type),' ',''),'-',''),'(',''),')','') IN ('premiumgoathissa') THEN 'premium_goat'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(l.order_type),' ',''),'-',''),'(',''),')','') IN ('exclusivegoathissa') THEN 'exclusive_goat'
     WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(l.order_type),' ',''),'-',''),'(',''),')','') IN ('goathissa') THEN 'goat'
     ELSE NULL
   END
@@ -126,7 +130,7 @@ function applyDashboardOrderTypeFilter(orderType, conditions) {
   const allowed = [];
 
   if (list.includes("hissa")) allowed.push("'standard'", "'premium'", "'waqf'", "'exclusive'");
-  if (list.includes("goat")) allowed.push("'goat'", "'super_goat'", "'premium_goat'");
+  if (list.includes("goat")) allowed.push("'goat'", "'super_goat'", "'premium_goat'", "'exclusive_goat'");
 
   conditions.push(`${TYPE_KEY_SQL} IN (${allowed.length ? allowed.join(",") : "'standard','premium','waqf','exclusive'"})`);
 }
@@ -135,9 +139,9 @@ function applyAreaOrderTypeFilter(orderType, conditions) {
   const list = getOrderTypeFilterList(orderType);
   const allowed = [];
 
-  // Area-wise: Hissa = Standard + Premium + Exclusive only (no Waqf). Goat = Super + Premium goat only (not generic Goat (Hissa)).
+  // Area-wise: Hissa = Standard + Premium + Exclusive only (no Waqf). Goat = Super + Premium + Exclusive goat only (not generic Goat (Hissa)).
   if (list.includes("hissa")) allowed.push("'standard'", "'premium'", "'exclusive'");
-  if (list.includes("goat")) allowed.push("'super_goat'", "'premium_goat'");
+  if (list.includes("goat")) allowed.push("'super_goat'", "'premium_goat'", "'exclusive_goat'");
 
   conditions.push(`${TYPE_KEY_SQL} IN (${allowed.length ? allowed.join(",") : "'standard','premium','exclusive'"})`);
 }
@@ -147,7 +151,7 @@ function applyLeadOrderTypeFilter(orderType, conditions) {
   const allowed = [];
 
   if (list.includes("hissa")) allowed.push("'standard'", "'premium'", "'waqf'", "'exclusive'");
-  if (list.includes("goat")) allowed.push("'goat'", "'super_goat'", "'premium_goat'");
+  if (list.includes("goat")) allowed.push("'goat'", "'super_goat'", "'premium_goat'", "'exclusive_goat'");
 
   conditions.push(`${LEAD_TYPE_KEY_SQL} IN (${allowed.length ? allowed.join(",") : "'standard','premium','waqf','exclusive'"})`);
 }
@@ -224,7 +228,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
     try {
       const { year = "all", orderType } = req.query;
 
-      const map = { premium: 0, standard: 0, waqf: 0, exclusive: 0, goat: 0, super_goat: 0, premium_goat: 0 };
+      const map = { premium: 0, standard: 0, waqf: 0, exclusive: 0, goat: 0, super_goat: 0, premium_goat: 0, exclusive_goat: 0 };
 
       if (hasOrderTypeQueryParam(orderType)) {
         const paramsFiltered = [];
@@ -255,7 +259,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
 
         const paramsGoat = [];
         const conditionsGoat = buildYearWhere(year, paramsGoat);
-        conditionsGoat.push(`${TYPE_KEY_SQL} IN ('goat','super_goat','premium_goat')`);
+        conditionsGoat.push(`${TYPE_KEY_SQL} IN ('goat','super_goat','premium_goat','exclusive_goat')`);
         const whereGoat = conditionsGoat.length ? `WHERE ${conditionsGoat.join(" AND ")}` : "";
 
         const [rowsGoat] = await db.execute(
@@ -270,7 +274,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
           paramsGoat
         );
 
-        const goatKeys = ["goat", "super_goat", "premium_goat"];
+        const goatKeys = ["goat", "super_goat", "premium_goat", "exclusive_goat"];
         for (const row of rowsGoat || []) {
           const k = row.typeKey;
           if (k && goatKeys.includes(k)) {
@@ -303,7 +307,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
         }
       }
 
-      const goatTotal = map.goat + map.super_goat + map.premium_goat;
+      const goatTotal = map.goat + map.super_goat + map.premium_goat + map.exclusive_goat;
       const achievedTotal = map.premium + map.standard + map.waqf + map.exclusive + goatTotal;
       const achievedForTarget = map.premium + map.standard + map.waqf + map.exclusive;
       const targetTotal = year === "2024" ? 500 : year === "2025" ? 1000 : 2000;
@@ -316,6 +320,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
         { key: "goat", label: TYPES.goat, value: goatTotal },
         { key: "super_goat", label: TYPES.super_goat, value: map.super_goat },
         { key: "premium_goat", label: TYPES.premium_goat, value: map.premium_goat },
+        { key: "exclusive_goat", label: TYPES.exclusive_goat, value: map.exclusive_goat },
       ].map((b) => ({
         ...b,
         percentage: achievedTotal > 0 ? (b.value / achievedTotal) * 100 : 0,
@@ -383,6 +388,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
         goat: 0,
         super_goat: 0,
         premium_goat: 0,
+        exclusive_goat: 0,
       });
 
       const base = {
@@ -437,7 +443,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
         return {
           key: dkey,
           title: d.title,
-          columns: ["Premium", "Standard", "Waqf", "Exclusive", "Total", "Super Goat", "Premium Goat"],
+          columns: ["Premium", "Standard", "Waqf", "Exclusive", "Total", "Super Goat", "Premium Goat", "Exclusive Goat"],
           data: [
             {
               label: "Total Orders",
@@ -447,6 +453,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
               exclusive: d.rows.totalOrders.exclusive,
               super_goat: d.rows.totalOrders.super_goat + d.rows.totalOrders.goat,
               premium_goat: d.rows.totalOrders.premium_goat,
+              exclusive_goat: d.rows.totalOrders.exclusive_goat,
               total: d.rows.totalOrders.premium + d.rows.totalOrders.standard + d.rows.totalOrders.waqf + d.rows.totalOrders.exclusive,
             },
             {
@@ -457,6 +464,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
               exclusive: d.rows.paymentCleared.exclusive,
               super_goat: d.rows.paymentCleared.super_goat + d.rows.paymentCleared.goat,
               premium_goat: d.rows.paymentCleared.premium_goat,
+              exclusive_goat: d.rows.paymentCleared.exclusive_goat,
               total: d.rows.paymentCleared.premium + d.rows.paymentCleared.standard + d.rows.paymentCleared.waqf + d.rows.paymentCleared.exclusive,
             },
             {
@@ -467,6 +475,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
               exclusive: d.rows.pendingCompletely.exclusive,
               super_goat: d.rows.pendingCompletely.super_goat + d.rows.pendingCompletely.goat,
               premium_goat: d.rows.pendingCompletely.premium_goat,
+              exclusive_goat: d.rows.pendingCompletely.exclusive_goat,
               total: d.rows.pendingCompletely.premium + d.rows.pendingCompletely.standard + d.rows.pendingCompletely.waqf + d.rows.pendingCompletely.exclusive,
             },
             {
@@ -477,6 +486,7 @@ export const registerDashboardRoutes = (app, db, verifyToken) => {
               exclusive: d.rows.pendingPartially.exclusive,
               super_goat: d.rows.pendingPartially.super_goat + d.rows.pendingPartially.goat,
               premium_goat: d.rows.pendingPartially.premium_goat,
+              exclusive_goat: d.rows.pendingPartially.exclusive_goat,
               total: d.rows.pendingPartially.premium + d.rows.pendingPartially.standard + d.rows.pendingPartially.waqf + d.rows.pendingPartially.exclusive,
             },
           ],
@@ -717,6 +727,7 @@ app.get("/api/dashboard/area-wise", verifyToken, async (req, res) => {
         SUM(CASE WHEN ${TYPE_KEY_SQL} = 'exclusive' THEN 1 ELSE 0 END) AS sum_exc,
         SUM(CASE WHEN ${TYPE_KEY_SQL} = 'super_goat' THEN 1 ELSE 0 END) AS sum_sg,
         SUM(CASE WHEN ${TYPE_KEY_SQL} = 'premium_goat' THEN 1 ELSE 0 END) AS sum_pg,
+        SUM(CASE WHEN ${TYPE_KEY_SQL} = 'exclusive_goat' THEN 1 ELSE 0 END) AS sum_eg,
         ${AREA_TYPE_GRID_META.sqlFragment}
       FROM orders o
       ${where}
@@ -741,6 +752,7 @@ app.get("/api/dashboard/area-wise", verifyToken, async (req, res) => {
         sum_exc: Number(r.sum_exc ?? r.SUM_EXC ?? 0),
         sum_sg: Number(r.sum_sg ?? r.SUM_SG ?? 0),
         sum_pg: Number(r.sum_pg ?? r.SUM_PG ?? 0),
+        sum_eg: Number(r.sum_eg ?? r.SUM_EG ?? 0),
         slotsByDay: {
           day1: { slot1: Number(r.d1s1 || 0), slot2: Number(r.d1s2 || 0), slot3: Number(r.d1s3 || 0) },
           day2: { slot1: Number(r.d2s1 || 0), slot2: Number(r.d2s2 || 0), slot3: Number(r.d2s3 || 0) },

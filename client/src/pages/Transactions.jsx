@@ -28,6 +28,9 @@ const TYPE_COLORS = {
   'Hissa - Standard': { bg: '#e8f4ff', color: '#2196F3' },
   'Hissa - Waqf':     { bg: '#edfbee', color: '#4CAF50' },
   'Goat (Hissa)':     { bg: '#fff8e8', color: '#FF9800' },
+  'Super Goat (Hissa)': { bg: '#fff8e8', color: '#f59e0b' },
+  'Premium Goat (Hissa)': { bg: '#fff4e8', color: '#d97706' },
+  'Exclusive Goat (Hissa)': { bg: '#f3e8ff', color: '#9333EA' },
 };
 
 function formatAmount(val) {
