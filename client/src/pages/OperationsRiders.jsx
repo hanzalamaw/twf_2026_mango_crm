@@ -11,6 +11,7 @@ import {
   OpsFilterToggleBtn,
   OpsFilterMobile,
 } from '../components/OpsFilters';
+import RiderAttendanceModal from '../components/RiderAttendanceModal';
 
 const RIDER_STATUSES = ['Available', 'On Delivery', 'Off Duty', 'Suspended'];
 
@@ -342,6 +343,7 @@ export default function OperationsRiders() {
   });
   const [ordersModal, setOrdersModal] = useState(null);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [attendanceRider, setAttendanceRider] = useState(null);
 
   const [adminTab, setAdminTab] = useState('riders');
   const [supervisors, setSupervisors] = useState([]);
@@ -1264,6 +1266,26 @@ export default function OperationsRiders() {
                         View assigned orders
                       </button>
                     </div>
+
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceRider(r)}
+                        style={{
+                          width: '100%',
+                          padding: '9px 12px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: '#FF5722',
+                          color: '#fff',
+                          fontSize: '11px',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Mark Attendance
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -2065,6 +2087,14 @@ export default function OperationsRiders() {
             )}
           </div>
         </div>
+      )}
+
+      {attendanceRider && (
+        <RiderAttendanceModal
+          rider={attendanceRider}
+          authFetch={authFetch}
+          onClose={() => setAttendanceRider(null)}
+        />
       )}
     </>
   );

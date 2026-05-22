@@ -20,6 +20,7 @@ import { registerFarmRoutes } from "./routes/farmRoutes.js";
 import { registerProcurementRoutes } from "./routes/procurement.js";
 import { registerAccountingRoutes } from "./routes/accountingRoutes.js";
 import { registerOperationsRoutes } from "./routes/operationsRoutes.js";
+import { registerRiderAttendanceRoutes } from "./routes/riderAttendanceRoutes.js";
 import { registerSlaughterRoutes } from "./routes/slaughterRoutes.js";
 import { registerLineRoutes } from "./routes/lineRoutes.js";
 import { buildPermissionsFromRoleRow } from "./utils/userPermissions.js";
@@ -403,6 +404,7 @@ const startServer = async () => {
     registerProcurementRoutes(app, db, verifyToken);
     registerAccountingRoutes(app, db, verifyToken);
     registerOperationsRoutes(app, db, verifyToken, io);
+    registerRiderAttendanceRoutes(app, db, verifyToken);
     registerSlaughterRoutes(app, db, verifyToken);
     registerLineRoutes(app, db, verifyToken);
 
