@@ -25,6 +25,11 @@ coverage/
 .env.development
 .env.production
 
+# Google / API secrets (never commit)
+server/config/credentials-for-twf-crm-drive-uploads.json
+server/config/*.json
+!server/config/.gitkeep
+
 # =========================
 # Logs
 # =========================

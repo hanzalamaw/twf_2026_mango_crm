@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { OpsSearchIcon } from '../components/OpsFilters';
 import { API_BASE } from '../config/api';
+import { formatRiderCompact } from '../utils/riderFormat';
 import {
   getDescriptionText,
   getOrderTag,
@@ -80,9 +81,7 @@ function StatusBadge({ status }) {
 
 function getRiderDetails(rider, fallbackName = 'Unassigned') {
   return {
-    name: rider?.rider_name || fallbackName,
-    vehicle: rider?.vehicle || '—',
-    number: rider?.number_plate || rider?.contact || '—',
+    name: formatRiderCompact(rider, fallbackName),
   };
 }
 

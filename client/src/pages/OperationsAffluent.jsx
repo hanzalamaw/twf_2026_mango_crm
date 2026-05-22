@@ -7,6 +7,7 @@ import SharedChallanModal from '../components/SharedChallanModal';
 import SearchableRiderFilter from '../components/SearchableRiderFilter';
 import { API_BASE } from '../config/api';
 import { getOperationsSocket } from '../utils/operationsSocket';
+import { formatRiderCompact } from '../utils/riderFormat';
 import { getDescriptionText, isAffluentOrder } from '../utils/orderTags';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
@@ -56,12 +57,6 @@ function formatTotalHissa(total, opts = {}) {
   if (premiumGoat > 0) parts.push(`${premiumGoat} Premium Goat`);
   return parts.length ? `${cleanTotal} (${parts.join(', ')})` : String(cleanTotal || 0);
 }
-function formatRiderCompact(rider, fallbackName = 'Unassigned') {
-  if (!rider) return fallbackName;
-  return String((rider.rider_name || fallbackName) + (rider.contact ? '(' + rider.contact + ')' : '') + (rider.vehicle ? ' ' + rider.vehicle : '')).trim();
-}
-
-
 const STATUS_STYLES = {
   Pending:            { bg: '#F5F5F5',  fg: '#666' },
   'Rider Assigned':   { bg: '#FFF8E1',  fg: '#F57C00' },
