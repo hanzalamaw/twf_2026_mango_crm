@@ -22,11 +22,12 @@ const STATUSES = ['Pending', 'Rider Assigned', 'Dispatched', 'Delivered', 'Retur
 
 const GOAT_HISSA_SUPER = 'Super Goat(Hissa)';
 const GOAT_HISSA_PREMIUM = 'Premium Goat(Hissa)';
-const ALLOWED_ORDER_TYPES = ['Hissa - Standard', 'Hissa Premium', 'Hissa - Waqf', GOAT_HISSA_SUPER, GOAT_HISSA_PREMIUM];
+const ALLOWED_ORDER_TYPES = ['Hissa - Standard', 'Hissa Premium', 'Hissa - Waqf', 'Hissa - Exclusive', GOAT_HISSA_SUPER, GOAT_HISSA_PREMIUM];
 const ORDER_TYPE_FILTERS = [
   { value: 'Hissa - Standard', label: 'Hissa Standard' },
   { value: 'Hissa Premium', label: 'Premium' },
   { value: 'Hissa - Waqf', label: 'Waqf' },
+  { value: 'Hissa - Exclusive', label: 'Exclusive' },
   { value: GOAT_HISSA_SUPER, label: 'Super Goat' },
   { value: GOAT_HISSA_PREMIUM, label: 'Premium Goat' },
 ];
@@ -35,6 +36,7 @@ function normalizeOrderType(value) {
   if (lower === 'hissa - standard' || lower === 'hissa standard') return 'Hissa - Standard';
   if (lower === 'hissa premium' || lower === 'hissa - premium') return 'Hissa Premium';
   if (lower === 'hissa - waqf' || lower === 'hissa waqf') return 'Hissa - Waqf';
+  if (lower === 'hissa - exclusive' || lower === 'hissa exclusive') return 'Hissa - Exclusive';
   if (lower === 'super goat(hissa)' || lower === 'super goat (hissa)') return GOAT_HISSA_SUPER;
   if (lower === 'premium goat(hissa)' || lower === 'premium goat (hissa)') return GOAT_HISSA_PREMIUM;
   if (lower === 'goat(hissa)' || lower === 'goat (hissa)' || lower === 'goat hissa') return GOAT_HISSA_SUPER;

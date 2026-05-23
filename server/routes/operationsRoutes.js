@@ -7,7 +7,9 @@ const REGENERATE_ALLOWED_EMAIL = "hanzalamawahab@gmail.com";
 const OPERATIONS_YEAR = 2026;
 const ALLOWED_ORDER_TYPE_SQL =
   "'hissa - standard', 'hissa standard', 'hissa premium', 'hissa - premium', 'hissa - waqf', 'hissa waqf', " +
+  "'hissa - exclusive', 'hissa exclusive', " +
   "'super goat(hissa)', 'super goat (hissa)', 'premium goat(hissa)', 'premium goat (hissa)', " +
+  "'exclusive goat(hissa)', 'exclusive goat (hissa)', " +
   "'goat(hissa)', 'goat (hissa)', 'goat hissa'";
 const allowedOrderType = (alias = "o") => `LOWER(TRIM(COALESCE(${alias}.order_type, ''))) IN (${ALLOWED_ORDER_TYPE_SQL})`;
 const nonWaqfOrder = allowedOrderType;
@@ -89,12 +91,85 @@ function classifyHissa(orderType) {
   const t = String(orderType || "").trim().toLowerCase().replace(/\s+/g, " ");
   if (t === "super goat(hissa)" || t === "super goat (hissa)") return "super_goat";
   if (t === "premium goat(hissa)" || t === "premium goat (hissa)") return "premium_goat";
+  if (t === "exclusive goat(hissa)" || t === "exclusive goat (hissa)") return "exclusive_goat";
   if (t === "goat(hissa)" || t === "goat (hissa)") return "super_goat";
   if (t === "hissa - waqf" || t === "hissa waqf") return "waqf";
   if (t === "hissa premium" || t === "hissa - premium") return "premium";
   if (t === "hissa - standard" || t === "hissa standard") return "standard";
+  if (t === "hissa - exclusive" || t === "hissa exclusive") return "exclusive";
   return "ignore";
 }
+
+const OPS_TYPE_KEY_SQL = `
+  CASE
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('hissapremium') THEN 'premium'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('hissastandard') THEN 'standard'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('hissawaqf') THEN 'waqf'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('hissaexclusive') THEN 'exclusive'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('exclusivegoathissa') THEN 'exclusive_goat'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('supergoathissa') THEN 'super_goat'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('premiumgoathissa') THEN 'premium_goat'
+    WHEN REPLACE(REPLACE(REPLACE(REPLACE(LOWER(o.order_type),' ',''),'-',''),'(',''),')','') IN ('goathissa') THEN 'super_goat'
+    ELSE NULL
+  END
+`;
+
+const ORDER_TYPE_DB_VARIANTS = {
+  standard: ["hissa - standard", "hissa standard"],
+  premium: ["hissa - premium", "hissa premium"],
+  waqf: ["hissa - waqf", "hissa waqf"],
+  exclusive: ["hissa - exclusive", "hissa exclusive"],
+  super_goat: ["super goat (hissa)", "super goat(hissa)", "goat (hissa)", "goat(hissa)", "goat hissa"],
+  premium_goat: ["premium goat (hissa)", "premium goat(hissa)"],
+  exclusive_goat: ["exclusive goat (hissa)", "exclusive goat(hissa)"],
+};
+
+function parseQueryList(val) {
+  if (Array.isArray(val)) return val.map((s) => String(s).trim()).filter(Boolean);
+  if (val != null && String(val).trim() !== "") {
+    return String(val).split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function filterKeyFromOrderType(raw) {
+  const t = String(raw || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (t === "hissa - standard" || t === "hissa standard") return "standard";
+  if (t === "hissa premium" || t === "hissa - premium") return "premium";
+  if (t === "hissa - waqf" || t === "hissa waqf") return "waqf";
+  if (t === "hissa - exclusive" || t === "hissa exclusive") return "exclusive";
+  if (t === "super goat(hissa)" || t === "super goat (hissa)") return "super_goat";
+  if (t === "premium goat(hissa)" || t === "premium goat (hissa)") return "premium_goat";
+  if (t === "exclusive goat(hissa)" || t === "exclusive goat (hissa)") return "exclusive_goat";
+  if (t === "goat(hissa)" || t === "goat (hissa)" || t === "goat hissa") return "super_goat";
+  return null;
+}
+
+function buildOrderTypeFilterSql(selectedKeys, alias = "o") {
+  if (!selectedKeys.length) return { sql: allowedOrderType(alias), params: [] };
+  const parts = [];
+  const params = [];
+  for (const key of selectedKeys) {
+    const variants = ORDER_TYPE_DB_VARIANTS[key];
+    if (!variants) continue;
+    for (const v of variants) {
+      parts.push(`LOWER(TRIM(COALESCE(${alias}.order_type, ''))) = ?`);
+      params.push(v);
+    }
+  }
+  if (!parts.length) return { sql: allowedOrderType(alias), params: [] };
+  return { sql: `(${parts.join(" OR ")})`, params };
+}
+
+function dayLabelToNumber(day) {
+  const n = String(day || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (n === "day 1" || n === "day1" || n === "1") return 1;
+  if (n === "day 2" || n === "day2" || n === "2") return 2;
+  if (n === "day 3" || n === "day3" || n === "3") return 3;
+  return null;
+}
+
+const LINE_COW_MULTIPLIER = 7;
 
 const GSEP = "\x1F";
 
@@ -1110,17 +1185,38 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       const flags = await assertSub(req, res, (f) => f.operation_general_dashboard || f.operation_management);
       if (!flags) return;
 
-      const { day, area, order_type } = req.query;
-      const conditions = [];
-      const params = [];
-      conditions.push("o.booking_date IS NOT NULL");
-      conditions.push("YEAR(o.booking_date) = ?");
-      params.push(OPERATIONS_YEAR);
-      conditions.push(nonWaqfOrder("o"));
-      if (day) { conditions.push("LOWER(TRIM(COALESCE(o.day, ''))) = LOWER(TRIM(?))"); params.push(String(day).trim()); }
-      if (area) { conditions.push("TRIM(COALESCE(o.area, '')) = ?"); params.push(String(area).trim()); }
-      if (order_type) { conditions.push("o.order_type = ?"); params.push(String(order_type).trim()); }
-      const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+      const { day } = req.query;
+      const areaList = parseQueryList(req.query.area);
+      const slotList = parseQueryList(req.query.slot);
+      const orderTypeKeys = parseQueryList(req.query.order_type)
+        .map((v) => filterKeyFromOrderType(v) || v)
+        .filter((k) => ORDER_TYPE_DB_VARIANTS[k]);
+      const deliveryStatuses = parseQueryList(req.query.delivery_status);
+      const statusFilter = deliveryStatuses.length
+        ? deliveryStatuses.filter((s) => ALLOWED_STATUSES.includes(s))
+        : ["Delivered"];
+
+      const baseConditions = [];
+      const baseParams = [];
+      baseConditions.push("o.booking_date IS NOT NULL");
+      baseConditions.push("YEAR(o.booking_date) = ?");
+      baseParams.push(OPERATIONS_YEAR);
+      const typeFilter = buildOrderTypeFilterSql(orderTypeKeys, "o");
+      baseConditions.push(typeFilter.sql);
+      baseParams.push(...typeFilter.params);
+      if (day) {
+        baseConditions.push("LOWER(TRIM(COALESCE(o.day, ''))) = LOWER(TRIM(?))");
+        baseParams.push(String(day).trim());
+      }
+      if (areaList.length) {
+        baseConditions.push(`TRIM(COALESCE(o.area, '')) IN (${areaList.map(() => "?").join(", ")})`);
+        baseParams.push(...areaList);
+      }
+      if (slotList.length) {
+        baseConditions.push(`TRIM(COALESCE(o.slot, '')) IN (${slotList.map(() => "?").join(", ")})`);
+        baseParams.push(...slotList);
+      }
+      const where = baseConditions.length ? `WHERE ${baseConditions.join(" AND ")}` : "";
 
       const [[summary]] = await db.execute(
         `SELECT COUNT(*) AS total_hissas,
@@ -1131,7 +1227,7 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
                 SUM(o.delivery_status = 'Rider Assigned') AS rider_assigned,
                 SUM(o.rider_id IS NULL) AS unassigned
          FROM orders o ${where}`,
-        params
+        baseParams
       );
       const [[riderCounts]] = await db.execute(
         `SELECT SUM(availability IN ('Available', 'On Delivery')) AS active_riders FROM riders WHERE status = 'active' OR status IS NULL`
@@ -1143,10 +1239,9 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
                 SUM(o.delivery_status = 'Dispatched') AS in_transit,
                 SUM(o.delivery_status = 'Returned to Farm') AS returned
          FROM orders o ${where} GROUP BY area ORDER BY area`,
-        params
+        baseParams
       );
-      const riderParams = [...params];
-      const riderWhere = conditions.length ? `AND ${conditions.join(" AND ")}` : "";
+      const riderWhere = baseConditions.length ? `AND ${baseConditions.join(" AND ")}` : "";
       const [riderSummary] = await db.execute(
         `SELECT r.rider_id, r.rider_name,
                 COALESCE(NULLIF(TRIM(r.availability), ''), 'Available') AS availability,
@@ -1156,13 +1251,118 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
          LEFT JOIN orders o ON o.rider_id = r.rider_id ${riderWhere}
          WHERE r.status = 'active' OR r.status IS NULL
          GROUP BY r.rider_id, r.rider_name, r.availability ORDER BY r.rider_name`,
-        riderParams
+        [...baseParams]
       );
+
+      const listWhere = [
+        "booking_date IS NOT NULL",
+        "YEAR(booking_date) = ?",
+        allowedOrderType("orders"),
+        "TRIM(COALESCE(area, '')) != ''",
+      ];
+      const listParams = [OPERATIONS_YEAR];
+      const [areaRows] = await db.execute(
+        `SELECT DISTINCT TRIM(area) AS area FROM orders orders
+         WHERE ${listWhere.join(" AND ")} ORDER BY area`,
+        listParams
+      );
+      const [slotRows] = await db.execute(
+        `SELECT DISTINCT TRIM(slot) AS slot FROM orders orders
+         WHERE booking_date IS NOT NULL AND YEAR(booking_date) = ? AND ${allowedOrderType("orders")}
+           AND TRIM(COALESCE(slot, '')) != '' ORDER BY slot`,
+        [OPERATIONS_YEAR]
+      );
+
+      const slaughterDay = dayLabelToNumber(day);
+      let slaughter = { cows_slaughtered: 0, goats_slaughtered: 0 };
+      if (slaughterDay) {
+        const [[slRow]] = await db.execute(
+          `SELECT
+             SUM(animal_type IN ('premium_cow','standard_cow','waqf_cow','exclusive_cow')) AS cows_slaughtered,
+             SUM(animal_type IN ('premium_goat','super_goat')) AS goats_slaughtered
+           FROM slaughter_records WHERE day = ?`,
+          [slaughterDay]
+        );
+        slaughter = {
+          cows_slaughtered: Number(slRow?.cows_slaughtered || 0),
+          goats_slaughtered: Number(slRow?.goats_slaughtered || 0),
+        };
+      }
+
+      let packing = { hissa_packed: 0, goats_packed: 0 };
+      if (slaughterDay) {
+        const [packRows] = await db.execute(
+          `SELECT animal_type, COUNT(*) AS cnt FROM line_records WHERE day = ? GROUP BY animal_type`,
+          [slaughterDay]
+        );
+        for (const row of packRows || []) {
+          const cnt = Number(row.cnt || 0);
+          if (["premium_cow", "standard_cow", "waqf_cow", "exclusive_cow"].includes(row.animal_type)) {
+            packing.hissa_packed += cnt * LINE_COW_MULTIPLIER;
+          } else if (["premium_goat", "super_goat"].includes(row.animal_type)) {
+            packing.goats_packed += cnt;
+          }
+        }
+      }
+
+      const [deliveriesBySlot] = await db.execute(
+        `SELECT COALESCE(NULLIF(TRIM(o.slot), ''), 'Unassigned') AS slot,
+                COUNT(*) AS total,
+                SUM(o.delivery_status = 'Delivered') AS delivered,
+                SUM(o.delivery_status = 'Pending') AS pending,
+                SUM(o.delivery_status = 'Dispatched') AS in_transit,
+                SUM(o.delivery_status = 'Returned to Farm') AS returned,
+                SUM(o.delivery_status = 'Rider Assigned') AS rider_assigned
+         FROM orders o ${where}
+         GROUP BY slot ORDER BY slot`,
+        baseParams
+      );
+
+      const targetConditions = [...baseConditions];
+      const targetParams = [...baseParams];
+      targetConditions.push(`o.delivery_status IN (${statusFilter.map(() => "?").join(", ")})`);
+      targetParams.push(...statusFilter);
+      const targetWhere = targetConditions.length ? `WHERE ${targetConditions.join(" AND ")}` : "";
+      const [targetRows] = await db.execute(
+        `SELECT ${OPS_TYPE_KEY_SQL} AS typeKey, COUNT(*) AS cnt
+         FROM orders o ${targetWhere}
+         GROUP BY typeKey`,
+        targetParams
+      );
+      const typeMap = { premium: 0, standard: 0, waqf: 0, exclusive: 0, super_goat: 0, premium_goat: 0, exclusive_goat: 0 };
+      for (const row of targetRows || []) {
+        if (row.typeKey && typeMap[row.typeKey] !== undefined) typeMap[row.typeKey] = Number(row.cnt || 0);
+      }
+      const goatTotal = typeMap.super_goat + typeMap.premium_goat + typeMap.exclusive_goat;
+      const achievedTotal = typeMap.premium + typeMap.standard + typeMap.waqf + typeMap.exclusive + goatTotal;
+      const targetTotal = 2000;
+      const TYPE_LABELS = {
+        premium: "Hissa - Premium",
+        standard: "Hissa - Standard",
+        waqf: "Hissa - Waqf",
+        exclusive: "Hissa - Exclusive",
+        goat: "Goat (Hissa)",
+        super_goat: "Super Goat (Hissa)",
+        premium_goat: "Premium Goat (Hissa)",
+        exclusive_goat: "Exclusive Goat (Hissa)",
+      };
+      const targetBreakdown = [
+        { key: "premium", label: TYPE_LABELS.premium, value: typeMap.premium },
+        { key: "standard", label: TYPE_LABELS.standard, value: typeMap.standard },
+        { key: "waqf", label: TYPE_LABELS.waqf, value: typeMap.waqf },
+        { key: "exclusive", label: TYPE_LABELS.exclusive, value: typeMap.exclusive },
+        { key: "goat", label: TYPE_LABELS.goat, value: goatTotal },
+        { key: "super_goat", label: TYPE_LABELS.super_goat, value: typeMap.super_goat },
+        { key: "premium_goat", label: TYPE_LABELS.premium_goat, value: typeMap.premium_goat },
+        { key: "exclusive_goat", label: TYPE_LABELS.exclusive_goat, value: typeMap.exclusive_goat },
+      ].map((b) => ({
+        ...b,
+        percentage: achievedTotal > 0 ? (b.value / achievedTotal) * 100 : 0,
+      }));
+
       const activeCount = Number(riderCounts.active_riders || 0);
       const avg = activeCount > 0 ? Math.round((Number(summary.delivered || 0) / activeCount) * 10) / 10 : 0;
-      const [typesRows] = await db.execute(
-        `SELECT DISTINCT order_type FROM orders WHERE order_type IS NOT NULL AND TRIM(order_type) != '' AND LOWER(TRIM(COALESCE(order_type, ''))) IN ('hissa - standard', 'hissa standard', 'hissa premium', 'hissa - premium', 'hissa - waqf', 'hissa waqf', 'goat(hissa)', 'goat (hissa)', 'goat hissa') ORDER BY order_type`
-      );
+
       res.json({
         total_hissas: Number(summary.total_hissas || 0),
         delivered: Number(summary.delivered || 0),
@@ -1173,8 +1373,27 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         unassigned: Number(summary.unassigned || 0),
         active_riders: activeCount,
         avg_deliveries_per_rider: avg,
-        areas, rider_summary: riderSummary,
-        order_types: typesRows.map((r) => r.order_type),
+        areas,
+        rider_summary: riderSummary,
+        areas_list: areaRows.map((r) => r.area),
+        slots_list: slotRows.map((r) => r.slot),
+        slaughter,
+        packing,
+        deliveries_by_slot: deliveriesBySlot.map((r) => ({
+          slot: r.slot,
+          total: Number(r.total || 0),
+          delivered: Number(r.delivered || 0),
+          pending: Number(r.pending || 0),
+          in_transit: Number(r.in_transit || 0),
+          returned: Number(r.returned || 0),
+          rider_assigned: Number(r.rider_assigned || 0),
+        })),
+        target_achievement: {
+          target: targetTotal,
+          achieved: achievedTotal,
+          breakdown: targetBreakdown,
+          delivery_statuses: statusFilter,
+        },
       });
     } catch (error) {
       logError("OPERATIONS", "Dashboard stats error", error);
