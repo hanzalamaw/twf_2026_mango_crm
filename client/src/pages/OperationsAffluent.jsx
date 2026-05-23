@@ -11,52 +11,21 @@ import { formatRiderCompact } from '../utils/riderFormat';
 import { getDescriptionText, isAffluentOrder } from '../utils/orderTags';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
+import {
+  ALLOWED_ORDER_TYPES,
+  ORDER_TYPE_FILTERS,
+  buildSummaryStatCards,
+  computeModalTotals,
+  formatTotalHissa,
+  groupMatchesOrderTypeFilter,
+  normalizeOrderType,
+  summarizeDeliveryGroups,
+  HISSA_COUNT_TABLE_HEADERS,
+  getTableHissaCounts,
+  hissaCountCellValues,
+} from '../utils/operationsOrderTypes';
 
 const STATUSES = ['Pending', 'Rider Assigned', 'Dispatched', 'Delivered', 'Returned to Farm'];
-
-const GOAT_HISSA_SUPER = 'Super Goat(Hissa)';
-const GOAT_HISSA_PREMIUM = 'Premium Goat(Hissa)';
-const ALLOWED_ORDER_TYPES = ['Hissa - Standard', 'Hissa Premium', 'Hissa - Waqf', GOAT_HISSA_SUPER, GOAT_HISSA_PREMIUM];
-const ORDER_TYPE_FILTERS = [
-  { value: 'Hissa - Standard', label: 'Hissa Standard' },
-  { value: 'Hissa Premium', label: 'Premium' },
-  { value: 'Hissa - Waqf', label: 'Waqf' },
-  { value: GOAT_HISSA_SUPER, label: 'Super Goat' },
-  { value: GOAT_HISSA_PREMIUM, label: 'Premium Goat' },
-];
-function normalizeOrderType(value) {
-  const lower = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  if (lower === 'hissa - standard' || lower === 'hissa standard') return 'Hissa - Standard';
-  if (lower === 'hissa premium' || lower === 'hissa - premium') return 'Hissa Premium';
-  if (lower === 'hissa - waqf' || lower === 'hissa waqf') return 'Hissa - Waqf';
-  if (lower === 'super goat(hissa)' || lower === 'super goat (hissa)') return GOAT_HISSA_SUPER;
-  if (lower === 'premium goat(hissa)' || lower === 'premium goat (hissa)') return GOAT_HISSA_PREMIUM;
-  if (lower === 'goat(hissa)' || lower === 'goat (hissa)' || lower === 'goat hissa') return GOAT_HISSA_SUPER;
-  return '';
-}
-function groupMatchesOrderType(g, filterOrderType) {
-  const selected = Array.isArray(filterOrderType) ? filterOrderType : (filterOrderType ? [filterOrderType] : []);
-  if (selected.length === 0) return true;
-  return (g.orders || []).some((o) => selected.includes(normalizeOrderType(o.order_type)));
-}
-
-function formatTotalHissa(total, opts = {}) {
-  const premium = Number(opts.premium || 0);
-  const standard = Number(opts.standard || 0);
-  const waqf = Number(opts.waqf || 0);
-  let superGoat = Number(opts.superGoat ?? opts.super_goat ?? 0);
-  let premiumGoat = Number(opts.premiumGoat ?? opts.premium_goat ?? 0);
-  const legacyGoat = Number(opts.goat || 0);
-  if (superGoat === 0 && premiumGoat === 0 && legacyGoat > 0) superGoat = legacyGoat;
-  const cleanTotal = Number(total ?? (premium + standard + waqf + superGoat + premiumGoat));
-  const parts = [];
-  if (premium > 0) parts.push(`${premium} Premium`);
-  if (standard > 0) parts.push(`${standard} Standard`);
-  if (waqf > 0) parts.push(`${waqf} Waqf`);
-  if (superGoat > 0) parts.push(`${superGoat} Super Goat`);
-  if (premiumGoat > 0) parts.push(`${premiumGoat} Premium Goat`);
-  return parts.length ? `${cleanTotal} (${parts.join(', ')})` : String(cleanTotal || 0);
-}
 const STATUS_STYLES = {
   Pending:            { bg: '#F5F5F5',  fg: '#666' },
   'Rider Assigned':   { bg: '#FFF8E1',  fg: '#F57C00' },
@@ -427,22 +396,6 @@ function groupMatchesDay(g, filterDay) {
   return normalizeForCompare(g.day) === normalizeForCompare(filterDay);
 }
 
-function getGroupOrderTypes(g) {
-  const direct = [...new Set((g.orders || []).map((o) => normalizeOrderType(o.order_type)).filter(Boolean))];
-  if (direct.length) return direct;
-  const inferred = [];
-  if (Number(g.standard_hissa_count || 0) > 0) inferred.push('Hissa - Standard');
-  if (Number(g.premium_hissa_count || 0) > 0) inferred.push('Hissa Premium');
-  if (Number(g.waqf_hissa_count || 0) > 0) inferred.push('Hissa - Waqf');
-  const sg = Number(g.super_goat_hissa_count ?? 0);
-  const pg = Number(g.premium_goat_hissa_count ?? 0);
-  const leg = Number(g.goat_hissa_count ?? 0);
-  if (sg > 0) inferred.push(GOAT_HISSA_SUPER);
-  if (pg > 0) inferred.push(GOAT_HISSA_PREMIUM);
-  if (sg === 0 && pg === 0 && leg > 0) inferred.push(GOAT_HISSA_SUPER);
-  return inferred;
-}
-
 export default function OperationsAffluent() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { authFetch } = useAuth();
@@ -587,7 +540,7 @@ export default function OperationsAffluent() {
     if (filterSlots.length) list = list.filter((g) => groupMatchesSlots(g, filterSlots));
     if (filterStatus.length) list = list.filter((g) => filterStatus.includes(g.derived_status || 'Pending'));
     if (filterRider) list = list.filter((g) => String(g.rider_id || '') === filterRider);
-    if (filterOrderType.length) list = list.filter((g) => groupMatchesOrderType(g, filterOrderType));
+    if (filterOrderType.length) list = list.filter((g) => groupMatchesOrderTypeFilter(g, filterOrderType));
     if (scanMatchToken) list = list.filter((g) => g.qr_token === scanMatchToken);
 
     list = [...list].sort((a, b) => {
@@ -611,28 +564,8 @@ export default function OperationsAffluent() {
   );
 
   /** Amounts/totals in Affluent must use affluent rows only (with active filters). */
-  const summary = useMemo(() => {
-    let tp = 0, ts = 0, tw = 0, tsg = 0, tpg = 0;
-    for (const g of displayGroups) {
-      tp += Number(g.premium_hissa_count || 0);
-      ts += Number(g.standard_hissa_count || 0);
-      tw += Number(g.waqf_hissa_count || 0);
-      let sg = Number(g.super_goat_hissa_count ?? 0);
-      let pg = Number(g.premium_goat_hissa_count ?? 0);
-      const leg = Number(g.goat_hissa_count || 0);
-      if (sg === 0 && pg === 0 && leg > 0) sg = leg;
-      tsg += sg;
-      tpg += pg;
-    }
-    return {
-      totalHissa: tp + ts + tw + tsg + tpg,
-      totalPremium: tp,
-      totalStandard: ts,
-      totalWaqf: tw,
-      totalSuperGoat: tsg,
-      totalPremiumGoat: tpg,
-    };
-  }, [displayGroups]);
+  const summary = useMemo(() => summarizeDeliveryGroups(displayGroups), [displayGroups]);
+  const summaryCards = useMemo(() => buildSummaryStatCards(summary), [summary]);
 
   const totalPages  = Math.max(1, Math.ceil(displayGroups.length / PAGE_SIZE));
   const pagedGroups = useMemo(() => displayGroups.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE), [displayGroups, page]);
@@ -682,19 +615,10 @@ export default function OperationsAffluent() {
 
   const modalDescription = useMemo(() => getDescriptionText({ ...(modal?.challan || {}), orders: modal?.orders || [] }), [modal]);
 
-  const modalTotals = useMemo(() => {
-    const c = modal?.challan || {};
-    const orders = modal?.orders || [];
-    const standard = Number(c.total_standard_hissa ?? c.standard_hissa_count ?? sumOrders(orders, 'standard_hissa_count') ?? 0);
-    const premium = Number(c.total_premium_hissa ?? c.premium_hissa_count ?? sumOrders(orders, 'premium_hissa_count') ?? 0);
-    const waqf = Number(c.total_waqf_hissa ?? c.waqf_hissa_count ?? sumOrders(orders, 'waqf_hissa_count') ?? 0);
-    let superGoat = Number(c.total_super_goat_hissa ?? 0);
-    let premiumGoat = Number(c.total_premium_goat_hissa ?? 0);
-    const legacyGoat = Number(c.total_goat_hissa ?? c.goat_hissa_count ?? sumOrders(orders, 'goat_hissa_count') ?? 0);
-    if (superGoat === 0 && premiumGoat === 0 && legacyGoat > 0) superGoat = legacyGoat;
-    const total = Number(c.total_hissa ?? c.hissa_count ?? c.order_count ?? (standard + premium + waqf + superGoat + premiumGoat) ?? 0);
-    return { standard, premium, waqf, superGoat, premiumGoat, total };
-  }, [modal]);
+  const modalTotals = useMemo(
+    () => computeModalTotals(modal?.challan, modal?.orders),
+    [modal]
+  );
 
   const stopScanner = useCallback(async () => {
     const inst = scannerRef.current; scannerRef.current = null;
@@ -854,7 +778,7 @@ export default function OperationsAffluent() {
 
         {/* Summary cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', marginBottom: '12px' }}>
-          {[['Total Hissa', summary.totalHissa], ['Premium', summary.totalPremium], ['Standard', summary.totalStandard], ['Waqf', summary.totalWaqf], ['Super Goat', summary.totalSuperGoat], ['Premium Goat', summary.totalPremiumGoat]].map(([k, v]) => (
+          {summaryCards.map(([k, v]) => (
             <div key={k} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '10px' }}>
               <div style={{ fontSize: '10px', color: '#777' }}>{k}</div>
               <div style={{ fontSize: '16px', fontWeight: 700 }}>{v}</div>
@@ -991,7 +915,7 @@ export default function OperationsAffluent() {
               
               <thead style={{ position:'sticky', top:0, zIndex:1 }}>
                 <tr style={{ background:'#fafafa' }}>
-                  {['No.', 'Status', 'Rider', 'Description', 'Booking Name', 'Standard', 'Premium', 'Waqf', 'Super Goat', 'Premium Goat', 'Total Hissa', 'Day / Slot', 'Area', 'Contact', 'Address', 'Customer ID'].map((h) => (
+                  {['No.', 'Status', 'Rider', 'Description', 'Booking Name', ...HISSA_COUNT_TABLE_HEADERS, 'Total Hissa', 'Day / Slot', 'Area', 'Contact', 'Address', 'Customer ID'].map((h) => (
                     <th key={h} style={{ textAlign:'left', padding:'10px 10px', borderBottom:'1px solid #e0e0e0', color:'#555', fontWeight:'600', whiteSpace:'nowrap', fontSize:'10px' }}>{h}</th>
                   ))}
                 </tr>
@@ -1000,11 +924,7 @@ export default function OperationsAffluent() {
                 {pagedGroups.map((g, idx) => {
                   const st = g.derived_status || 'Pending';
                   const rowIsAffluent = isAffluentOrder(g);
-                  let rowSuperGoat = Number(g.super_goat_hissa_count ?? 0);
-                  let rowPremiumGoat = Number(g.premium_goat_hissa_count ?? 0);
-                  const rowLegacyGoat = Number(g.goat_hissa_count ?? 0);
-                  if (rowSuperGoat === 0 && rowPremiumGoat === 0 && rowLegacyGoat > 0) rowSuperGoat = rowLegacyGoat;
-
+                  const rowCounts = getTableHissaCounts(g);
                   const isScanHit = scanMatchToken && g.qr_token === scanMatchToken;
                   return (
                     <tr
@@ -1030,12 +950,10 @@ export default function OperationsAffluent() {
                         <OrderDescriptionCell source={g} totalField="hissa_count" waqfField="waqf_hissa_count" />
                       </td>
                       <td className="ops-cell-wrap" style={{ padding:'9px 10px', fontWeight:'500', color:'#333', verticalAlign:'top' }}>{(g.booking_names||[]).join(', ')||'—'}</td>
-                      <td style={{ padding:'9px 10px', color:'#555' }}>{g.standard_hissa_count||0}</td>
-                      <td style={{ padding:'9px 10px', color:'#555' }}>{g.premium_hissa_count||0}</td>
-                      <td style={{ padding:'9px 10px', color:'#555' }}>{g.waqf_hissa_count||0}</td>
-                      <td style={{ padding:'9px 10px', color:'#555' }}>{rowSuperGoat}</td>
-                      <td style={{ padding:'9px 10px', color:'#555' }}>{rowPremiumGoat}</td>
-                      <td style={{ padding:'9px 10px', color:'#555', fontWeight:'600' }}>{Number(g.hissa_count || 0)}</td>
+                      {hissaCountCellValues(rowCounts).map((v, i) => (
+                        <td key={HISSA_COUNT_TABLE_HEADERS[i]} style={{ padding:'9px 10px', color:'#555' }}>{v}</td>
+                      ))}
+                      <td style={{ padding:'9px 10px', color:'#555', fontWeight:'600' }}>{rowCounts.total}</td>
                       <td style={{ padding:'9px 10px', color:'#555', whiteSpace:'nowrap' }}>
                         <div>{g.day||'—'}</div>
                         {getGroupSlots(g).length > 0 && <div style={{ fontSize:'9px', color:'#aaa' }}>{getGroupSlots(g).join(', ')}</div>}
@@ -1186,7 +1104,7 @@ export default function OperationsAffluent() {
             ['Day', modal.challan?.day || '—'],
             ['Slot', modal.challan?.slot || '—'],
             ['Rider', modalRiderDetails.name],
-                        ['Total Hissa', formatTotalHissa(modalTotals.total || 0, { premium: modalTotals.premium, standard: modalTotals.standard, waqf: modalTotals.waqf, superGoat: modalTotals.superGoat, premiumGoat: modalTotals.premiumGoat })],
+                        ['Total Hissa', formatTotalHissa(modalTotals.total || 0, modalTotals)],
           ]}
           orders={(modal.orders || []).filter((o) => ALLOWED_ORDER_TYPES.includes(normalizeOrderType(o.order_type)))}
           renderOrderStatus={(o) => <StatusBadge status={o.delivery_status} />}

@@ -3,18 +3,11 @@ import { API_BASE } from '../config/api';
 import { getOperationsSocket } from '../utils/operationsSocket';
 import { useAuth } from '../context/AuthContext';
 import OperationsTargetSection from '../components/OperationsTargetSection';
+import { ORDER_TYPE_FILTERS } from '../utils/operationsOrderTypes';
 
 const DELIVERY_STATUSES = ['Pending', 'Rider Assigned', 'Dispatched', 'Delivered', 'Returned to Farm'];
 
-const ORDER_TYPE_OPTIONS = [
-  'Hissa - Standard',
-  'Hissa - Premium',
-  'Hissa - Waqf',
-  'Hissa - Exclusive',
-  'Super Goat (Hissa)',
-  'Premium Goat (Hissa)',
-  'Exclusive Goat (Hissa)',
-].map((t) => ({ value: t, label: t }));
+const ORDER_TYPE_OPTIONS = ORDER_TYPE_FILTERS;
 
 const SLOT_OPTIONS = ['SLOT 1', 'SLOT 2', 'SLOT 3'];
 const DAY_OPTIONS = ['Day 1', 'Day 2', 'Day 3'];

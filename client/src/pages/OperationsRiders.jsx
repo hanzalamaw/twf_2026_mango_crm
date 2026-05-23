@@ -3,7 +3,16 @@ import { API_BASE } from '../config/api';
 import { getOperationsSocket } from '../utils/operationsSocket';
 import { useAuth } from '../context/AuthContext';
 import { Link, useLocation } from 'react-router-dom';
-import { getOrderTag, getChallanRowHighlight } from '../utils/orderTags';
+import { getDescriptionText, getOrderTag, getChallanRowHighlight } from '../utils/orderTags';
+import {
+  GOAT_HISSA_EXCLUSIVE,
+  GOAT_HISSA_PREMIUM,
+  GOAT_HISSA_SUPER,
+  normalizeOrderType,
+  HISSA_COUNT_TABLE_HEADERS,
+  getTableHissaCounts,
+  hissaCountCellValues,
+} from '../utils/operationsOrderTypes';
 import {
   OpsFilterSearch,
   OpsFilterSelect,
@@ -100,20 +109,6 @@ const compactSelectStyle = {
   color: '#333',
 };
 
-const GOAT_HISSA_SUPER = 'Super Goat(Hissa)';
-const GOAT_HISSA_PREMIUM = 'Premium Goat(Hissa)';
-
-function normalizeOrderType(value) {
-  const lower = String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  if (lower === 'hissa - standard' || lower === 'hissa standard') return 'Hissa - Standard';
-  if (lower === 'hissa premium' || lower === 'hissa - premium') return 'Hissa Premium';
-  if (lower === 'hissa - waqf' || lower === 'hissa waqf') return 'Hissa - Waqf';
-  if (lower === 'super goat(hissa)' || lower === 'super goat (hissa)') return GOAT_HISSA_SUPER;
-  if (lower === 'premium goat(hissa)' || lower === 'premium goat (hissa)') return GOAT_HISSA_PREMIUM;
-  if (lower === 'goat(hissa)' || lower === 'goat (hissa)' || lower === 'goat hissa') return GOAT_HISSA_SUPER;
-  return '';
-}
-
 const CHALLAN_STATUS_STYLES = {
   Pending: { bg: '#F5F5F5', fg: '#666' },
   'Rider Assigned': { bg: '#FFF8E1', fg: '#F57C00' },
@@ -189,37 +184,6 @@ function MultiLineCell({ values, empty = '—' }) {
   );
 }
 
-function getDescriptionText(source) {
-  if (!source) return '';
-  const normalize = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const originalMap = new Map();
-  const addValue = (val) => {
-    const norm = normalize(val);
-    if (!norm) return;
-    if (!originalMap.has(norm)) originalMap.set(norm, String(val).trim());
-  };
-  [
-    source.description,
-    source.descriptions,
-    source.description_csv,
-    source.descriptions_csv,
-    source.special_request,
-    source.specialRequest,
-    source.request,
-    source.remarks,
-    source.notes,
-    source.note,
-  ].forEach(addValue);
-  (source.orders || []).forEach((o) => {
-    if (o && typeof o === 'object') addValue(o.description);
-  });
-  return Array.from(originalMap.values()).join(' | ');
-}
-
-function hasDescription(source) {
-  return getDescriptionText(source).length > 0;
-}
-
 function deriveChallanStatusFromOrders(orders) {
   const statuses = (orders || [])
     .filter((o) => o && typeof o === 'object')
@@ -252,15 +216,19 @@ function groupRiderAssignedOrdersByChallan(flatOrders) {
     let std = 0;
     let prem = 0;
     let waqf = 0;
+    let exc = 0;
     let sg = 0;
     let pg = 0;
+    let eg = 0;
     for (const o of orders) {
       const t = normalizeOrderType(o.order_type);
       if (t === 'Hissa - Standard') std += 1;
       else if (t === 'Hissa Premium') prem += 1;
       else if (t === 'Hissa - Waqf') waqf += 1;
+      else if (t === 'Hissa - Exclusive') exc += 1;
       else if (t === GOAT_HISSA_SUPER) sg += 1;
       else if (t === GOAT_HISSA_PREMIUM) pg += 1;
+      else if (t === GOAT_HISSA_EXCLUSIVE) eg += 1;
     }
     const bookingNames = [...new Set(orders.map((x) => x.booking_name).filter(Boolean))];
     const customerIds = [...new Set(orders.map((x) => x.customer_id).filter(Boolean))];
@@ -284,10 +252,12 @@ function groupRiderAssignedOrdersByChallan(flatOrders) {
       standard_hissa_count: std,
       premium_hissa_count: prem,
       waqf_hissa_count: waqf,
+      exclusive_hissa_count: exc,
       super_goat_hissa_count: sg,
       premium_goat_hissa_count: pg,
-      goat_hissa_count: 0,
-      hissa_count: orders.length,
+      exclusive_goat_hissa_count: eg,
+      goat_hissa_count: sg + pg + eg,
+      hissa_count: std + prem + waqf + exc + sg + pg + eg,
       day: first.day,
       slots: slotsArr,
       slot: first.slot,
@@ -2017,7 +1987,7 @@ export default function OperationsRiders() {
                 <table className="ops-data-table" style={{ borderCollapse: 'collapse', fontSize: '11px' }}>
                   <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                     <tr style={{ background: '#fafafa' }}>
-                      {['No.', 'Status', 'Booking Name', 'Standard', 'Premium', 'Waqf', 'Super Goat', 'Premium Goat', 'Total Hissa', 'Day / Slot', 'Area', 'Contact', 'Address', 'Customer ID'].map((h) => (
+                      {['No.', 'Status', 'Booking Name', ...HISSA_COUNT_TABLE_HEADERS, 'Total Hissa', 'Day / Slot', 'Area', 'Contact', 'Address', 'Customer ID'].map((h) => (
                         <th key={h} style={{ textAlign: 'left', padding: '10px 10px', borderBottom: '1px solid #e0e0e0', color: '#555', fontWeight: '600', whiteSpace: 'nowrap', fontSize: '10px' }}>
                           {h}
                         </th>
@@ -2028,10 +1998,7 @@ export default function OperationsRiders() {
                     {assignedOrderGroups.map((g, idx) => {
                       const st = g.derived_status || 'Pending';
                       const rowHighlight = getChallanRowHighlight(getOrderTag(g, 'hissa_count', 'waqf_hissa_count'));
-                      let rowSuperGoat = Number(g.super_goat_hissa_count ?? 0);
-                      let rowPremiumGoat = Number(g.premium_goat_hissa_count ?? 0);
-                      const rowLegacyGoat = Number(g.goat_hissa_count ?? 0);
-                      if (rowSuperGoat === 0 && rowPremiumGoat === 0 && rowLegacyGoat > 0) rowSuperGoat = rowLegacyGoat;
+                      const rowCounts = getTableHissaCounts(g);
                       return (
                         <tr
                           key={g.group_key || g.challan_id}
@@ -2050,12 +2017,10 @@ export default function OperationsRiders() {
                           <td className="ops-cell-wrap" style={{ padding: '9px 10px', fontWeight: '500', color: '#333', verticalAlign: 'top' }}>
                             {(g.booking_names || []).filter(Boolean).map(String).join(', ') || '—'}
                           </td>
-                          <td style={{ padding: '9px 10px', color: '#555' }}>{g.standard_hissa_count || 0}</td>
-                          <td style={{ padding: '9px 10px', color: '#555' }}>{g.premium_hissa_count || 0}</td>
-                          <td style={{ padding: '9px 10px', color: '#555' }}>{g.waqf_hissa_count || 0}</td>
-                          <td style={{ padding: '9px 10px', color: '#555' }}>{rowSuperGoat}</td>
-                          <td style={{ padding: '9px 10px', color: '#555' }}>{rowPremiumGoat}</td>
-                          <td style={{ padding: '9px 10px', color: '#555', fontWeight: '600' }}>{Number(g.hissa_count || 0)}</td>
+                          {hissaCountCellValues(rowCounts).map((v, i) => (
+                            <td key={HISSA_COUNT_TABLE_HEADERS[i]} style={{ padding: '9px 10px', color: '#555' }}>{v}</td>
+                          ))}
+                          <td style={{ padding: '9px 10px', color: '#555', fontWeight: '600' }}>{rowCounts.total}</td>
                           <td style={{ padding: '9px 10px', color: '#555', whiteSpace: 'nowrap' }}>
                             <div>{g.day != null && g.day !== '' ? String(g.day) : '—'}</div>
                             {Array.isArray(g.slots) && g.slots.length > 0 && (

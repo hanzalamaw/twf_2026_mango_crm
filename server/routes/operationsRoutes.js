@@ -1020,17 +1020,19 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         for (const [, list] of grouped.entries()) {
           const first = list[0];
           const qrToken = crypto.randomBytes(24).toString("hex");
-          let tp = 0, ts = 0, tw = 0, tsg = 0, tpg = 0;
+          let tp = 0, ts = 0, tw = 0, te = 0, tsg = 0, tpg = 0, teg = 0;
           for (const row of list) {
             const c = classifyHissa(row.order_type);
             if (c === "premium") tp++;
             else if (c === "standard") ts++;
             else if (c === "waqf") tw++;
+            else if (c === "exclusive") te++;
             else if (c === "super_goat") tsg++;
             else if (c === "premium_goat") tpg++;
+            else if (c === "exclusive_goat") teg++;
           }
-          const tg = tsg + tpg;
-          const totalHissa = tp + ts + tw + tg;
+          const tg = tsg + tpg + teg;
+          const totalHissa = tp + ts + tw + te + tg;
           const bookingNames = [...new Set(list.map((x) => x.booking_name).filter(Boolean))];
           const descParts = [...new Set(list.map((x) => x.description).filter(Boolean))];
           const allSlots = [...new Set(list.map((x) => String(x.slot || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
