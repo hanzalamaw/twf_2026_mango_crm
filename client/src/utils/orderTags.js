@@ -55,10 +55,13 @@ function collectRawDescriptionValues(source) {
   return values;
 }
 
-/** Description is exactly "PRIORITY" (case-sensitive) with no other meaningful text. */
-export function hasPriorityOnlyDescription(source) {
-  const meaningful = collectRawDescriptionValues(source).filter((v) => !isPlaceholderDescriptionValue(v));
-  return meaningful.length > 0 && meaningful.every((v) => v === 'PRIORITY');
+const PRIORITY_WORD_RE = /\bPRIORITY\b/i;
+
+/** Any non-placeholder description contains the word PRIORITY. */
+export function hasPriorityInDescription(source) {
+  return collectRawDescriptionValues(source).some(
+    (v) => !isPlaceholderDescriptionValue(v) && PRIORITY_WORD_RE.test(v)
+  );
 }
 
 export function getDescriptionText(source) {
@@ -111,21 +114,23 @@ export function nonWaqfHissaCount(source, totalField = 'total_hissa', waqfField 
   return totalHissa - waqfHissa;
 }
 
-/** Affluent: PRIORITY-only description, or meaningful description with 3+ non-waqf hissa. */
-export function isAffluentOrder(source, totalField = 'total_hissa', waqfField = 'total_waqf_hissa') {
-  if (hasPriorityOnlyDescription(source)) return true;
-  return hasDescription(source) && nonWaqfHissaCount(source, totalField, waqfField) >= 3;
+/** Special request: meaningful description (not “-”), no PRIORITY word. Checked before affluent. */
+export function isSpecialRequestOrder(source, _totalField = 'total_hissa', _waqfField = 'total_waqf_hissa') {
+  if (!hasDescription(source)) return false;
+  if (hasPriorityInDescription(source)) return false;
+  return true;
 }
 
-/** Special request: meaningful description, 2 or fewer non-waqf hissa, not affluent/PRIORITY-only. */
-export function isSpecialRequestOrder(source, totalField = 'total_hissa', waqfField = 'total_waqf_hissa') {
-  if (isAffluentOrder(source, totalField, waqfField)) return false;
-  return hasDescription(source) && nonWaqfHissaCount(source, totalField, waqfField) <= 2;
+/** Affluent: among non–special-request rows, 3+ non-waqf hissa or description contains PRIORITY. */
+export function isAffluentOrder(source, totalField = 'total_hissa', waqfField = 'total_waqf_hissa') {
+  if (isSpecialRequestOrder(source, totalField, waqfField)) return false;
+  if (hasPriorityInDescription(source)) return true;
+  return nonWaqfHissaCount(source, totalField, waqfField) >= 3;
 }
 
 export function getOrderTag(source, totalField = 'total_hissa', waqfField = 'total_waqf_hissa') {
-  if (isAffluentOrder(source, totalField, waqfField)) return 'affluent';
   if (isSpecialRequestOrder(source, totalField, waqfField)) return 'special_request';
+  if (isAffluentOrder(source, totalField, waqfField)) return 'affluent';
   return null;
 }
 

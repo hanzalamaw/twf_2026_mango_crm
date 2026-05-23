@@ -830,7 +830,7 @@ export default function OperationsAffluent() {
           <div>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#333' }}>Affluent Management</h2>
             <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#888', fontWeight: '500', lineHeight: 1.45, maxWidth: '720px' }}>
-              Delivery groups with a description and 3+ non-waqf hissa (total minus waqf). Assign riders and update status.
+              Delivery groups with 3+ non-waqf hissa (total minus waqf) or a description containing PRIORITY. Excludes special-request rows. Assign riders and update status.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

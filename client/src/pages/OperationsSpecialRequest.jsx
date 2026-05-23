@@ -573,7 +573,7 @@ export default function OperationsSpecialRequest() {
   // ── filter + sort ────────────────────────────────────────────
   // All string comparisons go through normalizeForCompare so that
   // "DAY 1" / "Day 1" / "day 1" and "SLOT 1" / "Slot 1" all match.
-  /** Filters + sort — only special-request groups (excludes affluent, PRIORITY-only, no description, "-"). */
+  /** Filters + sort — only special-request groups (meaningful description, no PRIORITY word). */
   const filteredSortedAllGroups = useMemo(() => {
     let list = specialRequestGroups;
 
@@ -833,7 +833,7 @@ export default function OperationsSpecialRequest() {
           <div>
             <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#333' }}>Special Request Management</h2>
             <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#888', fontWeight: '500', lineHeight: 1.45, maxWidth: '720px' }}>
-              Special-request groups only: meaningful description (not “-”), 2 or fewer non-waqf hissa. PRIORITY-only rows appear on Affluent, not here.
+              Special-request groups only: meaningful description (not “-”) without the word PRIORITY. Rows with PRIORITY or 3+ non-waqf hissa appear on Affluent.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>

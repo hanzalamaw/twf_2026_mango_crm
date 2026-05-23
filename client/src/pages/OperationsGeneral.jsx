@@ -137,7 +137,7 @@ function MultiSelectDropdown({
                 style={{
                   display: 'block', width: '100%', textAlign: 'left',
                   padding: '5px 10px', fontSize: '10px', color: '#FF5722', cursor: 'pointer',
-                  fontWeight: '600', borderBottom: '1px solid #f5f5f5', marginBottom: '2px',
+                  fontWeight: '600', marginBottom: '2px',
                   background: 'transparent', border: 'none', borderBottom: '1px solid #f5f5f5',
                 }}
               >
