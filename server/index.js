@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "http";
+import { Server as SocketIOServer } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
@@ -17,6 +19,11 @@ import { registerPerformanceRoutes } from "./routes/performanceRoutes.js";
 import { registerFarmRoutes } from "./routes/farmRoutes.js";
 import { registerProcurementRoutes } from "./routes/procurement.js";
 import { registerAccountingRoutes } from "./routes/accountingRoutes.js";
+import { registerOperationsRoutes } from "./routes/operationsRoutes.js";
+import { registerRiderAttendanceRoutes } from "./routes/riderAttendanceRoutes.js";
+import { registerSlaughterRoutes } from "./routes/slaughterRoutes.js";
+import { registerLineRoutes } from "./routes/lineRoutes.js";
+import { buildPermissionsFromRoleRow } from "./utils/userPermissions.js";
 import { log, logError } from "./utils/logger.js";
 import { writeAuditLog } from "./utils/auditLog.js";
 import { sendLoginNotificationEmail } from "./utils/email.js";
@@ -26,6 +33,18 @@ import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardR
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
+const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: process.env.CLIENT_ORIGIN || "*",
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+  },
+});
+
+io.on("connection", (socket) => {
+  socket.join("operations");
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -71,6 +90,12 @@ const startServer = async () => {
           `SELECT u.user_id, u.username, u.email, u.first_name, u.last_name, u.password, u.role_id, u.terms_accepted_at, u.has_prev_logged_in,
             r.role_name,
             r.control_management, r.booking_management, r.operation_management,
+            r.operation_general_dashboard, r.operation_customer_support, r.operation_rider_management,
+            r.operation_rider_management_supervisor, r.operation_deliveries_management, r.operation_challan_management,
+            r.operation_affluent_management,
+            r.operation_special_request_management,
+            r.operation_slaughter_management,
+            r.operation_line_management,
             r.farm_management, r.procurement_management, r.accounting_and_finance, r.performance_management
            FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.username = ?`,
           [username]
@@ -127,15 +152,7 @@ const startServer = async () => {
           user_agent: req.get("user-agent")
         });
 
-        const permissions = {
-          control_management: !!user.control_management,
-          booking_management: !!user.booking_management,
-          operation_management: !!user.operation_management,
-          farm_management: !!user.farm_management,
-          procurement_management: !!user.procurement_management,
-          accounting_and_finance: !!user.accounting_and_finance,
-          performance_management: !!user.performance_management
-        };
+        const permissions = buildPermissionsFromRoleRow(user);
 
         const token = jwt.sign(
           { id: user.user_id, username: user.username, role: user.role_name, role_id: user.role_id, sessionId, permissions },
@@ -181,21 +198,19 @@ const startServer = async () => {
           `SELECT u.user_id, u.username, u.email, u.role_id, u.terms_accepted_at, u.has_prev_logged_in,
             r.role_name,
             r.control_management, r.booking_management, r.operation_management,
+            r.operation_general_dashboard, r.operation_customer_support, r.operation_rider_management,
+            r.operation_rider_management_supervisor, r.operation_deliveries_management, r.operation_challan_management,
+            r.operation_affluent_management,
+            r.operation_special_request_management,
+            r.operation_slaughter_management,
+            r.operation_line_management,
             r.farm_management, r.procurement_management, r.accounting_and_finance, r.performance_management
            FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = ?`,
           [req.userId]
         );
         if (rows.length === 0) return res.status(404).json({ message: "User not found" });
         const user = rows[0];
-        const permissions = {
-          control_management: !!user.control_management,
-          booking_management: !!user.booking_management,
-          operation_management: !!user.operation_management,
-          farm_management: !!user.farm_management,
-          procurement_management: !!user.procurement_management,
-          accounting_and_finance: !!user.accounting_and_finance,
-          performance_management: !!user.performance_management
-        };
+        const permissions = buildPermissionsFromRoleRow(user);
         res.json({
           user: {
             id: user.user_id,
@@ -242,20 +257,18 @@ const startServer = async () => {
           `SELECT u.user_id, u.username, u.email, u.role_id, u.terms_accepted_at, u.has_prev_logged_in,
             r.role_name,
             r.control_management, r.booking_management, r.operation_management,
+            r.operation_general_dashboard, r.operation_customer_support, r.operation_rider_management,
+            r.operation_rider_management_supervisor, r.operation_deliveries_management, r.operation_challan_management,
+            r.operation_affluent_management,
+            r.operation_special_request_management,
+            r.operation_slaughter_management,
+            r.operation_line_management,
             r.farm_management, r.procurement_management, r.accounting_and_finance, r.performance_management
            FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = ?`,
           [userId]
         );
         const u = rows[0];
-        const permissions = {
-          control_management: !!u.control_management,
-          booking_management: !!u.booking_management,
-          operation_management: !!u.operation_management,
-          farm_management: !!u.farm_management,
-          procurement_management: !!u.procurement_management,
-          accounting_and_finance: !!u.accounting_and_finance,
-          performance_management: !!u.performance_management
-        };
+        const permissions = buildPermissionsFromRoleRow(u);
         res.json({
           user: {
             id: u.user_id,
@@ -294,6 +307,12 @@ const startServer = async () => {
           `SELECT u.user_id, u.username, u.email, u.role_id, u.terms_accepted_at, u.has_prev_logged_in,
             r.role_name,
             r.control_management, r.booking_management, r.operation_management,
+            r.operation_general_dashboard, r.operation_customer_support, r.operation_rider_management,
+            r.operation_rider_management_supervisor, r.operation_deliveries_management, r.operation_challan_management,
+            r.operation_affluent_management,
+            r.operation_special_request_management,
+            r.operation_slaughter_management,
+            r.operation_line_management,
             r.farm_management, r.procurement_management, r.accounting_and_finance, r.performance_management
            FROM users u JOIN roles r ON u.role_id = r.role_id WHERE u.user_id = ?`,
           [session.user_id]
@@ -303,15 +322,7 @@ const startServer = async () => {
           return res.status(401).json({ message: 'User not found' });
         }
         const user = rows[0];
-        const permissions = {
-          control_management: !!user.control_management,
-          booking_management: !!user.booking_management,
-          operation_management: !!user.operation_management,
-          farm_management: !!user.farm_management,
-          procurement_management: !!user.procurement_management,
-          accounting_and_finance: !!user.accounting_and_finance,
-          performance_management: !!user.performance_management
-        };
+        const permissions = buildPermissionsFromRoleRow(user);
         const token = jwt.sign(
           { id: user.user_id, username: user.username, role: user.role_name, role_id: user.role_id, sessionId: session.session_id, permissions },
           JWT_SECRET,
@@ -394,6 +405,10 @@ const startServer = async () => {
     registerPerformanceRoutes(app, db, verifyToken);
     registerProcurementRoutes(app, db, verifyToken);
     registerAccountingRoutes(app, db, verifyToken);
+    registerOperationsRoutes(app, db, verifyToken, io);
+    registerRiderAttendanceRoutes(app, db, verifyToken);
+    registerSlaughterRoutes(app, db, verifyToken);
+    registerLineRoutes(app, db, verifyToken);
 
     // ---------- 404 ----------
     app.use((req, res) => {
@@ -402,7 +417,7 @@ const startServer = async () => {
     });
 
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       log("SERVER", "Server started", { port: PORT });
       console.log(`Server running on http://localhost:${PORT}`);
       console.log('Auth: POST /api/login, POST /api/logout');

@@ -33,7 +33,27 @@ const AuthCallback = () => {
       if (userParam) {
         try {
           const user = JSON.parse(decodeURIComponent(userParam));
-          const userWithPerms = { ...user, permissions: { control_management: true, booking_management: true, operation_management: true, farm_management: true, procurement_management: true, accounting_and_finance: true, performance_management: true }, role_id: user.role_id || 1 };
+          const userWithPerms = {
+            ...user,
+            permissions: {
+              control_management: true,
+              booking_management: true,
+              operation_management: true,
+              operation_general_dashboard: false,
+              operation_customer_support: false,
+              operation_rider_management: false,
+              operation_rider_management_supervisor: false,
+              operation_deliveries_management: false,
+              operation_challan_management: false,
+              operation_affluent_management: false,
+              operation_special_request_management: false,
+              farm_management: true,
+              procurement_management: true,
+              accounting_and_finance: true,
+              performance_management: true,
+            },
+            role_id: user.role_id || 1,
+          };
           login(userWithPerms, token, refreshToken || null);
           navigate(user.has_prev_logged_in ? '/' : '/accept-terms');
         } catch (error) {

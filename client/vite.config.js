@@ -20,9 +20,15 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: originFromApiUrl(env.VITE_API_URL),
           changeOrigin: true,
-          secure: false
-        }
-      }
-    }
+          secure: false,
+        },
+        '/socket.io': {
+          target: originFromApiUrl(env.VITE_API_URL),
+          changeOrigin: true,
+          secure: false,
+          ws: true,
+        },
+      },
+    },
   }
 })

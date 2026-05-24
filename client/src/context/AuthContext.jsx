@@ -47,62 +47,76 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const savedUser = localStorage.getItem('user');
     const token = localStorage.getItem('token');
-    if (savedUser && token) {
-      const parsed = JSON.parse(savedUser);
-      setUser(parsed);
-      if (!parsed.permissions || parsed.role_id == null) {
-        const tryMe = (accessToken) =>
-          fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${accessToken}` } });
-        tryMe(token)
-          .then((res) => {
-            if (res.status === 401) {
-              const refreshToken = localStorage.getItem('refreshToken');
-              if (!refreshToken) {
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const tryMe = (accessToken) =>
+      fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${accessToken}` } });
+
+    let cancelled = false;
+    tryMe(token)
+      .then((res) => {
+        if (res.status === 401) {
+          const refreshToken = localStorage.getItem('refreshToken');
+          if (!refreshToken) {
+            clearSessionAndLogout();
+            return null;
+          }
+          return fetch(`${API_BASE}/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken }),
+          })
+            .then((r) => {
+              if (!r.ok) {
                 clearSessionAndLogout();
                 return null;
               }
-              return fetch(`${API_BASE}/refresh`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refreshToken })
-              })
-                .then((r) => {
-                  if (!r.ok) {
-                    clearSessionAndLogout();
-                    return null;
-                  }
-                  return r.json();
-                })
-                .then((data) => {
-                  if (!data || !data.token) {
-                    clearSessionAndLogout();
-                    return null;
-                  }
-                  localStorage.setItem('token', data.token);
-                  return tryMe(data.token);
-                });
-            }
-            return res;
-          })
-          .then((res) => {
-            if (!res) return null;
-            if (res.ok) return res.json();
-            return null;
-          })
-          .then((data) => {
-            if (data && data.user) {
-              setUser(data.user);
-              localStorage.setItem('user', JSON.stringify(data.user));
-            }
-          })
-          .catch(() => clearSessionAndLogout())
-          .finally(() => setLoading(false));
-        return;
-      }
-    }
-    setLoading(false);
+              return r.json();
+            })
+            .then((data) => {
+              if (!data?.token) {
+                clearSessionAndLogout();
+                return null;
+              }
+              localStorage.setItem('token', data.token);
+              return tryMe(data.token);
+            });
+        }
+        return res;
+      })
+      .then((res) => {
+        if (!res) return null;
+        if (res.ok) return res.json();
+        return null;
+      })
+      .then((data) => {
+        if (cancelled || !data?.user) return;
+        setUser(data.user);
+        localStorage.setItem('user', JSON.stringify(data.user));
+      })
+      .catch(() => {
+        /* keep cached user on network errors */
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = (userData, token, refreshToken = null) => {

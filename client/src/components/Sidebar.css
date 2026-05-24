@@ -59,6 +59,14 @@
   padding-bottom: 44px;
 }
 
+.sidebar-profile.sidebar-profile--rider-minimal {
+  justify-content: center;
+}
+
+.sidebar.collapsed .sidebar-profile.sidebar-profile--rider-minimal {
+  padding-bottom: 11px;
+}
+
 .profile-avatar {
   width: 29px;
   height: 29px;
@@ -234,6 +242,7 @@
 
 .nav-link:hover  { background: #FFF5F2; }
 .nav-link.active { background: #FFEDE6; color: #FF5722; }
+.nav-link.active:hover { background: #FFEDE6; color: #FF5722; }
 
 .nav-icon {
   display: flex;
@@ -266,6 +275,7 @@
 
 .nav-link:hover .nav-label,
 .nav-link.active .nav-label { color: #1f2937; }
+.nav-link.active:hover .nav-label { color: #1f2937; }
 
 /* Bottom */
 .sidebar-bottom {
@@ -398,6 +408,11 @@
     border-bottom: 1px solid #f3f4f6;
   }
 
+  .drawer-header.drawer-header--rider-minimal {
+    justify-content: flex-end;
+    padding: 14px 16px;
+  }
+
   .drawer-profile {
     display: flex;
     align-items: center;
@@ -517,6 +532,7 @@
 
   .drawer-nav-link:hover  { background: #FFF5F2; }
   .drawer-nav-link.active { background: #FFEDE6; }
+  .drawer-nav-link.active:hover { background: #FFEDE6; }
 
   .drawer-nav-icon {
     display: flex;
@@ -542,6 +558,7 @@
 
   .drawer-nav-link:hover .drawer-nav-label { color: #111827; }
   .drawer-nav-link.active .drawer-nav-label { color: #FF5722; font-weight: 600; }
+  .drawer-nav-link.active:hover .drawer-nav-label { color: #FF5722; font-weight: 600; }
 
   .drawer-active-dot {
     width: 6px;

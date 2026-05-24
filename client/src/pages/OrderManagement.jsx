@@ -490,7 +490,7 @@ export default function OrderManagement() {
         {/* ── Mobile filter panel ── */}
         <div className="om-filter-mobile" style={{ display: 'none' }}>
           {mobileFiltersOpen && (
-            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div className="ops-filter-mobile-panel">
               {!isFarm && (
               <div>
                 <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Cow Number</label>
@@ -516,7 +516,7 @@ export default function OrderManagement() {
                 <button type="button" onClick={() => { fetchOrders(); setMobileFiltersOpen(false); }}
                   style={{ flex: 1, padding: '10px', background: '#FF5722', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' }}>Apply</button>
                 <button type="button" onClick={() => { handleResetFilters(); setMobileFiltersOpen(false); }}
-                  style={{ flex: 1, padding: '10px', background: '#fff', color: '#555', border: '1px solid #e0e0e0', borderRadius: '8px', fontSize: '13px', cursor: 'pointer' }}>Reset</button>
+                  className="ops-filter-mobile-reset">Reset</button>
               </div>
             </div>
           )}

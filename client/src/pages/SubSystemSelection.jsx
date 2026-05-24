@@ -137,8 +137,16 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
   const permissions = user?.permissions || {};
   const hasAccess = (perm) => !!permissions[perm];
 
+  const hasOperationsEntry = (p) =>
+    !!(p.operation_management || p.operation_rider_management || p.operation_rider_management_supervisor);
+
+  const isOptionAccessible = (option) => {
+    if (option.id === 'operations') return hasOperationsEntry(permissions);
+    return hasAccess(option.permission);
+  };
+
   const handleClick = (option) => {
-    if (!hasAccess(option.permission)) {
+    if (!isOptionAccessible(option)) {
       setAccessBlocked(option.name);
       setTimeout(() => setAccessBlocked(null), 3000);
       return;
@@ -162,7 +170,7 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
 
   /* ── Mobile Layout ─────────────────────────────────────────── */
   if (forceMobileLayout || isMobile) {
-    const accessibleCount = OPTIONS.filter(o => hasAccess(o.permission)).length;
+    const accessibleCount = OPTIONS.filter((o) => isOptionAccessible(o)).length;
 
     return (
       <>
@@ -346,12 +354,20 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
             align-self: start;
             opacity: 0;
             transform: translateY(16px);
-            animation: cardReveal 0.4s ease forwards;
+            animation: cardReveal 0.45s ease forwards;
           }
-          .mob-card.ready { opacity: 1; transform: translateY(0); }
 
           @keyframes cardReveal {
+            from { opacity: 0; transform: translateY(16px); }
             to { opacity: 1; transform: translateY(0); }
+          }
+
+          @media (prefers-reduced-motion: reduce) {
+            .mob-card {
+              animation: none;
+              opacity: 1;
+              transform: none;
+            }
           }
 
           .mob-card:active {
@@ -485,13 +501,13 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
           {/* Cards grid */}
           <div className="mob-grid">
             {OPTIONS.map((option, idx) => {
-              const accessible = hasAccess(option.permission);
+              const accessible = isOptionAccessible(option);
               const isLastOdd = idx === OPTIONS.length - 1 && OPTIONS.length % 2 !== 0;
               return (
                 <button
                   key={option.id}
                   type="button"
-                  className={`mob-card ${!accessible ? 'locked' : ''} ${isLastOdd ? 'wide' : ''} ${mounted ? 'ready' : ''}`}
+                  className={`mob-card ${!accessible ? 'locked' : ''} ${isLastOdd ? 'wide' : ''}`}
                   style={{
                     animationDelay: `${idx * 55}ms`,
                     borderColor: pressedId === option.id ? option.accent : undefined,

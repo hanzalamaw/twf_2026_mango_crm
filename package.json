@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "googleapis": "^172.0.0",
+    "multer": "^2.1.1"
+  }
+}
