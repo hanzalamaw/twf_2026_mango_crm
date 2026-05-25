@@ -34,10 +34,77 @@ import {
   normalizeOrderType,
   isGoatHissaOrderType,
   partitionOrdersForChallanPrint,
+  GOAT_HISSA_PREMIUM,
+  GOAT_HISSA_SUPER,
   HISSA_COUNT_TABLE_HEADERS,
   getTableHissaCounts,
   hissaCountCellValues,
 } from '../utils/operationsOrderTypes';
+
+/** Display-only labels on printed challans/stickers (does not affect generation or stored types). */
+const CHALLAN_PRINT_ORDER_TYPE_LABELS = {
+  'Hissa - Standard': 'Hissa Ijtimai',
+  [GOAT_HISSA_PREMIUM]: 'Goat 15 KG',
+  [GOAT_HISSA_SUPER]: 'Goat 12 KG',
+};
+
+function stripDashesFromPrintLabel(text) {
+  return String(text || '').replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function formatOrderTypeForChallanPrint(orderType) {
+  const normalized = normalizeOrderType(orderType) || String(orderType || '').trim() || 'Hissa';
+  const raw = CHALLAN_PRINT_ORDER_TYPE_LABELS[normalized] || normalized;
+  return stripDashesFromPrintLabel(raw);
+}
+
+/** Order-type count lines for challan PDF info box (first-seen order, print labels). */
+function buildChallanPrintOrderTypeSummary(orders) {
+  const seen = [];
+  const counts = new Map();
+  for (const o of orders || []) {
+    const t = normalizeOrderType(o?.order_type);
+    if (!t) continue;
+    if (!counts.has(t)) {
+      seen.push(t);
+      counts.set(t, 0);
+    }
+    counts.set(t, counts.get(t) + 1);
+  }
+  return seen.map((t) => ({
+    label: formatOrderTypeForChallanPrint(t),
+    count: counts.get(t),
+    text: `${formatOrderTypeForChallanPrint(t)} - ${counts.get(t)}`,
+  }));
+}
+
+function getChallanPrintInfoFields(c, orders, safe) {
+  const uniqueJoin = (arr) =>
+    [...new Set(arr.map((v) => String(v || '').trim()).filter(Boolean))].join(', ');
+  const customerId =
+    c.customer_ids_csv ||
+    c.customer_id ||
+    uniqueJoin(orders.map((o) => o.customer_id)) ||
+    '—';
+  const bookingName =
+    c.booking_name ||
+    uniqueJoin(orders.map((o) => o.booking_name)) ||
+    '—';
+  const contact =
+    c.contacts_csv ||
+    uniqueJoin(orders.map((o) => o.contact)) ||
+    '';
+  const altContact =
+    c.alt_contacts_csv ||
+    uniqueJoin(orders.map((o) => o.alt_contact)) ||
+    '';
+  return {
+    customerId: safe(customerId, '—'),
+    bookingName: safe(bookingName, '—'),
+    contact: safe(contact, '—'),
+    altContact: safe(altContact, '—'),
+  };
+}
 
 const REGENERATE_EMAIL = 'hanzalamawahab@gmail.com';
 const STATUS_STYLES = {
@@ -92,22 +159,101 @@ function short(v, n = 64) {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-/** Header badge — solid black pill, white text (B&W print; same for Affluent & Special Request). */
-function drawPdfHeaderBadge(doc, label, x, baselineY, variant) {
-  const paddingX = 9;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(variant === 'special_request' ? 8 : 9);
-  const textW = doc.getTextWidth(label);
-  const badgeW = textW + paddingX * 2;
-  const badgeH = 16;
-  const badgeY = baselineY - 13;
+/** Header tag pill between challan title and QR — top-aligned, height fits text. */
+function drawPdfHeaderTagBanner(doc, tag, gapStartX, gapEndX, topY) {
+  const labels = {
+    affluent: 'AFFLUENT',
+    special_request: 'SPECIAL REQUEST',
+  };
+  const text = labels[tag];
+  if (!text || gapEndX <= gapStartX + 48) return;
 
-  doc.setFillColor(0, 0, 0);
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(1);
-  doc.roundedRect(x, badgeY, badgeW, badgeH, 3, 3, 'FD');
-  doc.setTextColor(255, 255, 255);
-  doc.text(label, x + paddingX, baselineY - 1);
+  const sideMargin = 16;
+  const paddingX = 14;
+  const paddingY = 6;
+  const boxX = gapStartX + sideMargin;
+  const boxW = gapEndX - gapStartX - sideMargin * 2;
+  if (boxW < 48) return;
+
+  doc.setFont('helvetica', 'bold');
+  let fontSize = tag === 'special_request' ? 14 : 16;
+  doc.setFontSize(fontSize);
+  const maxTextW = boxW - paddingX * 2;
+  let textW = doc.getTextWidth(text);
+  while (textW > maxTextW && fontSize > 8) {
+    fontSize -= 0.5;
+    doc.setFontSize(fontSize);
+    textW = doc.getTextWidth(text);
+  }
+
+  const textH = fontSize * 1.2;
+  const boxH = textH + paddingY * 2;
+  const boxY = topY;
+
+  const isAffluent = tag === 'affluent';
+  if (isAffluent) {
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(1.2);
+    doc.roundedRect(boxX, boxY, boxW, boxH, 4, 4, 'FD');
+    doc.setTextColor(0, 0, 0);
+  } else {
+    doc.setFillColor(0, 0, 0);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(1);
+    doc.roundedRect(boxX, boxY, boxW, boxH, 4, 4, 'FD');
+    doc.setTextColor(255, 255, 255);
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(fontSize);
+  doc.text(text, boxX + boxW / 2, boxY + boxH / 2, { align: 'center', baseline: 'middle' });
+}
+
+/** Centered tag box for order sticker pages (above order type). */
+function drawCenteredTagBox(doc, tag, centerX, topY, maxWidth) {
+  const labels = {
+    affluent: 'AFFLUENT',
+    special_request: 'SPECIAL REQUEST',
+  };
+  const text = labels[tag];
+  if (!text) return topY;
+
+  const paddingX = 14;
+  const paddingY = 6;
+  doc.setFont('helvetica', 'bold');
+  let fontSize = tag === 'special_request' ? 14 : 16;
+  doc.setFontSize(fontSize);
+  const maxTextW = maxWidth - paddingX * 2;
+  let textW = doc.getTextWidth(text);
+  while (textW > maxTextW && fontSize > 8) {
+    fontSize -= 0.5;
+    doc.setFontSize(fontSize);
+    textW = doc.getTextWidth(text);
+  }
+
+  const boxW = textW + paddingX * 2;
+  const boxH = fontSize * 1.2 + paddingY * 2;
+  const boxX = centerX - boxW / 2;
+  const isAffluent = tag === 'affluent';
+
+  if (isAffluent) {
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(1.2);
+  } else {
+    doc.setFillColor(0, 0, 0);
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(1);
+  }
+  doc.roundedRect(boxX, topY, boxW, boxH, 4, 4, 'FD');
+  doc.setTextColor(isAffluent ? 0 : 255, isAffluent ? 0 : 255, isAffluent ? 0 : 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(fontSize);
+  doc.text(text, centerX, topY + boxH / 2, { align: 'center', baseline: 'middle' });
+
+  const marginBottom = 28;
+  return topY + boxH + marginBottom;
 }
 
 function getPrimarySlot(slotStr) {
@@ -211,14 +357,25 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
   const orders = Array.isArray(item.orders) ? item.orders : [];
   const { customerId, customerName, contact } = getFields(c, orders, safe);
 
-  const orderTypeNorm = normalizeOrderType(order.order_type) || safe(order.order_type, 'Hissa');
+  const orderTypeNorm = formatOrderTypeForChallanPrint(order.order_type);
   const shareholder = safe(order.shareholder_name || order.booking_name, '—');
   const shareDesc = safe(order.description);
+  const tagSource = {
+    ...c,
+    orders,
+    description: getDescriptionText({ ...c, orders }),
+  };
+  const stickerTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
 
   let y = 52;
   const centerX = PW / 2;
+  const contentMaxW = CONTENT_W - 48;
 
-  const typeLines = split(orderTypeNorm, CONTENT_W - 48).slice(0, 3);
+  if (stickerTag) {
+    y = drawCenteredTagBox(doc, stickerTag, centerX, y, contentMaxW);
+  }
+
+  const typeLines = split(orderTypeNorm, contentMaxW).slice(0, 3);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(28);
   doc.setTextColor(0, 0, 0);
@@ -231,7 +388,7 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(13);
     doc.setTextColor(50, 50, 50);
-    const descLines = split(shareDesc, CONTENT_W - 48).slice(0, 4);
+    const descLines = split(shareDesc, contentMaxW).slice(0, 4);
     descLines.forEach((line, i) => {
       doc.text(line, centerX, y + i * 18, { align: 'center' });
     });
@@ -300,7 +457,6 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
     rowY += Math.max(lh, rh) + 12;
   });
 
-  const bottomY = boxY + boxH + 48;
   const bottomMid = ML + CONTENT_W / 2;
   const leftColX = ML + 8;
   const rightColX = bottomMid + 16;
@@ -318,10 +474,7 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
     doc.line(leftColX + labelW + 4, yPos + 3, sigLineEnd, yPos + 3);
   };
 
-  drawSigLine('Checked & Verified By:', bottomY);
-  drawSigLine('Customer Signature:', bottomY + 52);
-
-  const includesBoxY = bottomY - 8;
+  const includesBoxY = boxY + boxH + 32;
   const includesOptions = [
     'In Bone Meat',
     'Boneless Meat',
@@ -348,6 +501,10 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
   });
   drawStickerCheckbox(doc, rightColX + 14, optY, 'Other:', rightColX + rightColW - 14);
 
+  const includesBottom = includesBoxY + includesBoxH;
+  const verifiedByY = includesBottom - 3;
+  drawSigLine('Checked & Verified By:', verifiedByY);
+
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(160, 160, 160);
@@ -357,17 +514,19 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
 /* ─────────────────────────────────────────────
    renderChallanPagesForOrders — challan list page(s) for one order-type section
    ───────────────────────────────────────────── */
-async function renderChallanPagesForOrders(doc, ctx, item, orders) {
+async function renderChallanPagesForOrders(doc, ctx, item, orders, { isPrimaryChallanPage = false } = {}) {
   const { PW, PH, ML, MR, CONTENT_W, safe, split, drawLineValue, nextPage } = ctx;
   const c = item.challan || {};
   const orderList = Array.isArray(orders) ? orders : [];
 
-  const modalPdfTotals = computeModalTotals(c, orderList);
-  const totalHissaText = formatTotalHissa(modalPdfTotals.total, modalPdfTotals);
+  const allOrdersForSummary = Array.isArray(item.orders) ? item.orders : orderList;
+  const modalPdfTotals = computeModalTotals(c, allOrdersForSummary);
+  const totalHissaText = String(modalPdfTotals.total ?? 0);
+  const orderTypeSummaryLines = buildChallanPrintOrderTypeSummary(allOrdersForSummary);
   const tagSource = { ...c, orders: orderList, description: getDescriptionText({ ...c, orders: orderList }) };
   const challanTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
 
-  const { customerId, customerName, contact } = getChallanCustomerFields(c, orderList, safe);
+  const { customerId, bookingName, contact, altContact } = getChallanPrintInfoFields(c, allOrdersForSummary, safe);
 
   let pageNo = 0;
   let orderIndex = 0;
@@ -376,17 +535,23 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
     nextPage();
     pageNo++;
   
-        // Header — tag badge to the right of title (B&W: solid black pill for both tags)
         const titleText = `CHALLAN # ${safe(c.challan_id, '')}`;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(19);
         doc.setTextColor(0, 0, 0);
         doc.text(titleText, ML, 42);
         const titleW = doc.getTextWidth(titleText);
-        if (challanTag === 'affluent') {
-          drawPdfHeaderBadge(doc, 'AFFLUENT', ML + titleW + 12, 42, 'affluent');
-        } else if (challanTag === 'special_request') {
-          drawPdfHeaderBadge(doc, 'SPECIAL REQUEST', ML + titleW + 12, 42, 'special_request');
+
+        const qrSize = 76;
+        const qrX = MR - qrSize - 8;
+        const qrY = 18;
+        const qrBottomY = qrY + qrSize;
+        const bannerStartX = ML + titleW + 10;
+        const bannerEndX = qrX - 8;
+        const titleTopY = 42 - 19 * 0.78;
+
+        if (challanTag === 'affluent' || challanTag === 'special_request') {
+          drawPdfHeaderTagBanner(doc, challanTag, bannerStartX, bannerEndX, titleTopY);
         }
 
         doc.setFont('helvetica', 'normal');
@@ -395,10 +560,6 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
         doc.text('THE WARSI FARM', ML, 58);
 
         // QR
-        const qrSize = 76;
-        const qrX = MR - qrSize - 8;
-        const qrY = 18;
-        const qrBottomY = qrY + qrSize;
         const qrToken = c.qr_token || c.challan_token || '';
         const qrText = qrToken
           ? `${window.location.origin}/operations/deliveries?challan=${encodeURIComponent(qrToken)}`
@@ -425,53 +586,111 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
           const boxX = ML;
           const boxY = y;
           const midX = ML + CONTENT_W / 2;
-          const leftX = boxX + 28;
-          const rightX = midX + 28;
-          const colMaxW = CONTENT_W / 2 - 52;
-          const infoLineH = 12;
-          const infoRowGap = 10;
-          const wrapExtraGap = 8;
+          const leftX = boxX + 24;
+          const rightX = midX + 24;
+          const colMaxW = CONTENT_W / 2 - 48;
+          const INFO_LABEL_SIZE = 11;
+          const INFO_VALUE_SIZE = 12;
+          const INFO_LINE_H = 17;
+          const INFO_ROW_GAP = 10;
+          const INFO_WRAP_GAP = 6;
 
-          const measureInfoCell = (label, value) => {
+          const measurePlainLines = (lines, maxW) => {
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9.5);
-            const labelW = doc.getTextWidth(`${label}: `);
-            doc.setFont('helvetica', 'normal');
-            const lines = doc.splitTextToSize(safe(value), colMaxW - labelW - 6).slice(0, 2);
-            const wrapExtra = lines.length > 1 ? wrapExtraGap : 0;
-            return infoLineH * lines.length + wrapExtra;
+            doc.setFontSize(INFO_VALUE_SIZE);
+            return (lines || []).reduce((sum, text) => {
+              if (text == null) return sum + INFO_LINE_H;
+              const wrapped = doc.splitTextToSize(safe(text), maxW).slice(0, 3);
+              const wrapExtra = wrapped.length > 1 ? INFO_WRAP_GAP : 0;
+              return sum + INFO_LINE_H * wrapped.length + wrapExtra;
+            }, 0);
           };
 
-          const drawInfoCell = (label, value, x, yPos) => {
+          const measureLabeledBlock = (label, value, inline = false) => {
+            if (inline) return INFO_LINE_H + INFO_ROW_GAP;
             doc.setFont('helvetica', 'bold');
-            doc.setFontSize(9.5);
-            doc.setTextColor(25, 25, 25);
-            doc.text(`${label}:`, x, yPos);
-
-            const labelW = doc.getTextWidth(`${label}: `);
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(9.5);
-            doc.setTextColor(45, 45, 45);
-
-            const lines = doc.splitTextToSize(safe(value), colMaxW - labelW - 6).slice(0, 2);
-            doc.text(lines, x + labelW + 4, yPos);
+            doc.setFontSize(INFO_LABEL_SIZE);
+            const labelH = INFO_LINE_H;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(INFO_VALUE_SIZE);
+            const valueLines = doc.splitTextToSize(safe(value), colMaxW).slice(0, 3);
+            const wrapExtra = valueLines.length > 1 ? INFO_WRAP_GAP : 0;
+            return labelH + INFO_LINE_H * valueLines.length + wrapExtra + INFO_ROW_GAP;
           };
 
-          const pairedRowHeight = (leftLabel, leftValue, rightLabel, rightValue) =>
-            Math.max(
-              measureInfoCell(leftLabel, leftValue),
-              measureInfoCell(rightLabel, rightValue)
-            ) + infoRowGap;
+          const drawPlainLines = (lines, x, startY, maxW) => {
+            let yPos = startY;
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(INFO_VALUE_SIZE);
+            doc.setTextColor(20, 20, 20);
+            for (const text of lines) {
+              if (text == null) {
+                yPos += INFO_LINE_H;
+                continue;
+              }
+              const wrapped = doc.splitTextToSize(safe(text), maxW).slice(0, 3);
+              doc.text(wrapped, x, yPos);
+              const wrapExtra = wrapped.length > 1 ? INFO_WRAP_GAP : 0;
+              yPos += INFO_LINE_H * wrapped.length + wrapExtra;
+            }
+            return yPos;
+          };
 
-          const infoRows = [
-            ['Customer ID', customerId, 'Address', c.address || '—'],
-            ['Customer Name', customerName, 'Area', c.area || '—'],
-            ['Contact', contact, 'Total Hissa', totalHissaText],
+          const drawLabeledBlock = (label, value, x, startY, inline = false) => {
+            if (inline) {
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(INFO_LABEL_SIZE);
+              doc.setTextColor(20, 20, 20);
+              const labelText = `${label}: `;
+              doc.text(labelText, x, startY);
+              const labelW = doc.getTextWidth(labelText);
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(INFO_VALUE_SIZE);
+              doc.setTextColor(30, 30, 30);
+              doc.text(safe(value), x + labelW, startY);
+              return startY + INFO_LINE_H + INFO_ROW_GAP;
+            }
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(INFO_LABEL_SIZE);
+            doc.setTextColor(20, 20, 20);
+            doc.text(`${label}:`, x, startY);
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(INFO_VALUE_SIZE);
+            doc.setTextColor(30, 30, 30);
+            const valueLines = doc.splitTextToSize(safe(value), colMaxW).slice(0, 3);
+            const valueY = startY + INFO_LINE_H;
+            doc.text(valueLines, x, valueY);
+            const wrapExtra = valueLines.length > 1 ? INFO_WRAP_GAP : 0;
+            return valueY + INFO_LINE_H * valueLines.length + wrapExtra + INFO_ROW_GAP;
+          };
+
+          const leftLines = [
+            customerId,
+            null,
+            bookingName,
+            null,
+            contact,
+            altContact,
+            null,
+            c.area || '—',
           ];
-          const boxH = infoRows.reduce(
-            (sum, [ll, lv, rl, rv]) => sum + pairedRowHeight(ll, lv, rl, rv),
-            32
+          const rightBlocks = [
+            { label: 'Address', value: c.address || '—' },
+            { label: 'Total Hissa', value: totalHissaText, inline: true },
+            ...orderTypeSummaryLines.map((line) => ({ label: null, value: line.text })),
+          ];
+
+          const leftH = measurePlainLines(leftLines, colMaxW) + 16;
+          const rightH = rightBlocks.reduce(
+            (sum, block) =>
+              sum
+              + (block.label
+                ? measureLabeledBlock(block.label, block.value, block.inline)
+                : measurePlainLines([block.value], colMaxW) + INFO_ROW_GAP),
+            16
           );
+          const boxH = Math.max(leftH, rightH, 120);
 
           doc.setFillColor(252, 252, 252);
           doc.setDrawColor(215, 215, 215);
@@ -481,12 +700,23 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
           doc.setDrawColor(235, 235, 235);
           doc.line(midX, boxY + 14, midX, boxY + boxH - 14);
 
-          let rowY = boxY + 24;
-          infoRows.forEach(([leftLabel, leftValue, rightLabel, rightValue]) => {
-            drawInfoCell(leftLabel, leftValue, leftX, rowY);
-            drawInfoCell(rightLabel, rightValue, rightX, rowY);
-            rowY += pairedRowHeight(leftLabel, leftValue, rightLabel, rightValue);
-          });
+          let leftY = boxY + 26;
+          leftY = drawPlainLines(leftLines, leftX, leftY, colMaxW);
+
+          let rightY = boxY + 26;
+          for (const block of rightBlocks) {
+            if (block.label) {
+              rightY = drawLabeledBlock(block.label, block.value, rightX, rightY, block.inline);
+            } else {
+              doc.setFont('helvetica', 'bold');
+              doc.setFontSize(INFO_VALUE_SIZE);
+              doc.setTextColor(30, 30, 30);
+              const wrapped = doc.splitTextToSize(safe(block.value), colMaxW).slice(0, 2);
+              doc.text(wrapped, rightX, rightY);
+              const wrapExtra = wrapped.length > 1 ? INFO_WRAP_GAP : 0;
+              rightY += INFO_LINE_H * wrapped.length + wrapExtra + INFO_ROW_GAP;
+            }
+          }
 
           y = boxY + boxH + 32;
   
@@ -536,7 +766,7 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
           const nameLines = split(o.shareholder_name || o.booking_name || '—', col1MaxW).slice(0, 2);
           const shareDesc = safe(o.description);
           const shareDescLines = shareDesc ? split(shareDesc, col1MaxW).slice(0, 4) : [];
-          const orderType = safe(o.order_type, 'Hissa');
+          const orderType = formatOrderTypeForChallanPrint(o.order_type);
           const day = o.day ? ` (${o.day})` : '';
           const mainDesc = `${orderType}${day}`;
           const mainLines = split(mainDesc, col2MaxW).slice(0, 2);
@@ -586,7 +816,7 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
               doc.text(shareDescLines, col1X, col1Y + 3);
             }
   
-            const orderType = safe(o.order_type, 'Hissa');
+            const orderType = formatOrderTypeForChallanPrint(o.order_type);
             const day = o.day ? ` (${o.day})` : '';
             const mainDesc = `${orderType}${day}`;
             const mainLines = split(mainDesc, col2MaxW).slice(0, 2);
@@ -619,21 +849,16 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders) {
           }
         }
   
-        // Approval/signature ONLY after all rows printed
-        if (orderIndex >= Math.max(orderList.length, 1)) {
+        if (pageNo === 1 && isPrimaryChallanPage) {
           const footerY = PH - 48;
-  
-          doc.setFont('helvetica', 'bold');
-          doc.setFontSize(10);
-          doc.setTextColor(20, 20, 20);
-  
-          doc.text('Approval:', ML + 4, footerY);
-          doc.setDrawColor(30, 30, 30);
-          doc.setLineWidth(0.8);
-          doc.line(ML + 58, footerY + 3, ML + 220, footerY + 3);
-  
-          doc.text('Customer Signature:', ML + CONTENT_W / 2 + 18, footerY);
-          doc.line(ML + CONTENT_W / 2 + 130, footerY + 3, MR - 8, footerY + 3);
+          const sigMidX = ML + CONTENT_W / 2;
+          drawLineValue('Approval Stamp:', '', ML + 4, footerY, sigMidX - 20);
+          drawLineValue('Customer Signature (Upon Receiving):', '', sigMidX + 18, footerY, MR - 8);
+        } else if (orderIndex >= Math.max(orderList.length, 1) && !isPrimaryChallanPage) {
+          const footerY = PH - 48;
+          const sigMidX = ML + CONTENT_W / 2;
+          drawLineValue('Approval Stamp:', '', ML + 4, footerY, sigMidX - 20);
+          drawLineValue('Customer Signature (Upon Receiving):', '', sigMidX + 18, footerY, MR - 8);
         }
   
         doc.setFont('helvetica', 'normal');
@@ -717,8 +942,12 @@ async function generatePdf(items, options = {}) {
       ? sections
       : [{ orders: [] }];
 
+    let isFirstChallanSection = true;
     for (const { orders: sectionOrders } of printSections) {
-      await renderChallanPagesForOrders(doc, ctx, item, sectionOrders);
+      await renderChallanPagesForOrders(doc, ctx, item, sectionOrders, {
+        isPrimaryChallanPage: isFirstChallanSection,
+      });
+      isFirstChallanSection = false;
       for (const o of sectionOrders) {
         nextPage();
         drawOrderStickerPage(doc, layout, item, o, pdfHelpers);
