@@ -4,7 +4,7 @@ import { jsPDF } from 'jspdf';
 import { useAuth } from '../context/AuthContext';
 import SharedChallanModal from '../components/SharedChallanModal';
 import { API_BASE } from '../config/api';
-import { getOperationsSocket } from '../utils/operationsSocket';
+import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
 import { formatRiderCompact } from '../utils/riderFormat';
 import QRCode from 'qrcode';
 import {
@@ -21,6 +21,7 @@ import {
   itemMatchesDay,
   itemMatchesSlots,
   pruneSlotFilter,
+  slotFilterValuesKey,
 } from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
@@ -868,17 +869,10 @@ export default function OperationsChallan() {
   useEffect(() => { loadRiders(); }, []);
   useEffect(() => { if (selectedBatch !== null) load(); }, [load, selectedBatch]);
 
-  useEffect(() => {
-    const socket = getOperationsSocket();
-    const refresh = () => { loadBatches(); loadRiders(); if (selectedBatch !== null) load(); };
-    socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refresh);
-    return () => {
-      socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refresh);
-    };
+  useOperationsSocketRefresh(() => {
+    loadBatches();
+    loadRiders();
+    if (selectedBatch !== null) load();
   }, [load, loadBatches, loadRiders, selectedBatch]);
 
   const riderMap = useMemo(() => {
@@ -919,9 +913,14 @@ export default function OperationsChallan() {
     [challans, filterDay]
   );
 
+  const slotOptionsKey = useMemo(
+    () => slotFilterValuesKey(slotFilterOptions),
+    [slotFilterOptions]
+  );
+
   useEffect(() => {
     setFilterSlot((prev) => pruneSlotFilter(prev, slotFilterOptions.map((o) => o.value)));
-  }, [filterDay, slotFilterOptions]);
+  }, [filterDay, slotOptionsKey]);
   const statusFilterOptions = useMemo(() => STATUS_STYLES ? Object.keys(STATUS_STYLES).map((s) => ({ value: s, label: s })) : [], []);
 
   const displayRows = useMemo(() => {

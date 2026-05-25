@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import SharedChallanModal from '../components/SharedChallanModal';
 import SearchableRiderFilter from '../components/SearchableRiderFilter';
 import { API_BASE } from '../config/api';
-import { getOperationsSocket } from '../utils/operationsSocket';
+import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
 import { formatRiderCompact } from '../utils/riderFormat';
 import {
   getDescriptionText,
@@ -18,10 +18,12 @@ import {
 } from '../utils/orderTags';
 import {
   buildSlotFilterOptions,
+  getGroupSlots,
   getSlotsForItem,
   itemMatchesDay,
   itemMatchesSlots,
   pruneSlotFilter,
+  slotFilterValuesKey,
 } from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
@@ -448,17 +450,9 @@ export default function OperationsDeliveries() {
 
   useEffect(() => { if (selectedBatch !== null) load(); }, [load, selectedBatch]);
 
-  useEffect(() => {
-    const socket = getOperationsSocket();
-    const refresh = () => { loadBatches(); if (selectedBatch !== null) load(); };
-    socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refresh);
-    return () => {
-      socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refresh);
-    };
+  useOperationsSocketRefresh(() => {
+    loadBatches();
+    if (selectedBatch !== null) load();
   }, [load, loadBatches, selectedBatch]);
 
   const slotFilterOptions = useMemo(
@@ -466,9 +460,14 @@ export default function OperationsDeliveries() {
     [groups, filterDay]
   );
 
+  const slotOptionsKey = useMemo(
+    () => slotFilterValuesKey(slotFilterOptions),
+    [slotFilterOptions]
+  );
+
   useEffect(() => {
     setFilterSlots((prev) => pruneSlotFilter(prev, slotFilterOptions.map((o) => o.value)));
-  }, [filterDay, slotFilterOptions]);
+  }, [filterDay, slotOptionsKey]);
 
   const orderTypeOptions = ORDER_TYPE_FILTERS;
   const statusOptions = useMemo(() => STATUSES.map((s) => ({ value: s, label: s })), []);
@@ -913,7 +912,7 @@ export default function OperationsDeliveries() {
                       <td style={{ padding:'9px 10px', color:'#555', fontWeight:'600' }}>{rowCounts.total}</td>
                       <td style={{ padding:'9px 10px', color:'#555', whiteSpace:'nowrap' }}>
                         <div>{g.day||'—'}</div>
-                        {getGroupSlots(g).length > 0 && <div style={{ fontSize:'9px', color:'#aaa' }}>{getGroupSlots(g).join(', ')}</div>}
+                        {getGroupSlots(g, filterDay).length > 0 && <div style={{ fontSize:'9px', color:'#aaa' }}>{getGroupSlots(g, filterDay).join(', ')}</div>}
                       </td>
                       <td className="ops-cell-wrap" style={{ padding:'9px 10px', color:'#555', verticalAlign:'top' }}>{g.area||'—'}</td>
                       <td className="ops-cell-wrap" style={{ padding:'9px 10px', color:'#555' }}><MultiLineCell values={[g.contacts || [], g.alt_contacts || []]} /></td>

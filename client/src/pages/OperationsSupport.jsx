@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { OpsSearchIcon } from '../components/OpsFilters';
 import { API_BASE } from '../config/api';
-import { getOperationsSocket } from '../utils/operationsSocket';
+import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
 import { useAuth } from '../context/AuthContext';
 import SharedChallanModal from '../components/SharedChallanModal';
 import SearchableRiderFilter from '../components/SearchableRiderFilter';
@@ -19,6 +19,7 @@ import {
   itemMatchesDay,
   itemMatchesSlots,
   pruneSlotFilter,
+  slotFilterValuesKey,
 } from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
@@ -166,17 +167,9 @@ export default function OperationsCustomerSupport() {
 
   useEffect(() => { if (ready && selectedBatch !== null) load(); }, [load, ready, selectedBatch]);
 
-  useEffect(() => {
-    const socket = getOperationsSocket();
-    const refresh = () => { loadBatches(); if (selectedBatch !== null) load(); };
-    socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refresh);
-    return () => {
-      socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refresh);
-    };
+  useOperationsSocketRefresh(() => {
+    loadBatches();
+    if (selectedBatch !== null) load();
   }, [load, loadBatches, selectedBatch]);
 
   const riderMap = useMemo(() => {
@@ -218,9 +211,14 @@ export default function OperationsCustomerSupport() {
     [groups, selectedDay]
   );
 
+  const slotOptionsKey = useMemo(
+    () => slotFilterValuesKey(slotOptions),
+    [slotOptions]
+  );
+
   useEffect(() => {
     setSlotFilter((prev) => pruneSlotFilter(prev, slotOptions.map((o) => o.value)));
-  }, [selectedDay, slotOptions]);
+  }, [selectedDay, slotOptionsKey]);
   const statusOptions = useMemo(() => ALL_STATUSES.map((status) => ({ value: status, label: status })), []);
 
   const filteredGroups = useMemo(() => {

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+function joinFilterKey(values) {
+  return (Array.isArray(values) ? values : []).map((v) => String(v ?? '').trim()).join('\x1f');
+}
 import { API_BASE } from '../config/api';
-import { getOperationsSocket } from '../utils/operationsSocket';
+import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
 import { useAuth } from '../context/AuthContext';
 import OperationsTargetSection from '../components/OperationsTargetSection';
 import { ORDER_TYPE_FILTERS } from '../utils/operationsOrderTypes';
@@ -288,6 +292,11 @@ export default function OperationsDashboard() {
   const [filterSlots, setFilterSlots] = useState([]);
   const [filterStatuses, setFilterStatuses] = useState(['Delivered']);
 
+  const filterAreasKey = useMemo(() => joinFilterKey(filterAreas), [filterAreas]);
+  const filterOrderTypesKey = useMemo(() => joinFilterKey(filterOrderTypes), [filterOrderTypes]);
+  const filterSlotsKey = useMemo(() => joinFilterKey(filterSlots), [filterSlots]);
+  const filterStatusesKey = useMemo(() => joinFilterKey(filterStatuses), [filterStatuses]);
+
   const load = useCallback(async () => {
     setErr('');
     const isInitial = firstLoad.current;
@@ -314,22 +323,13 @@ export default function OperationsDashboard() {
       setRefreshing(false);
       firstLoad.current = false;
     }
-  }, [authFetch, dayFilter, filterAreas, filterOrderTypes, filterSlots, filterStatuses]);
-
-  useEffect(() => { load(); }, [load]);
+  }, [authFetch, dayFilter, filterAreasKey, filterOrderTypesKey, filterSlotsKey, filterStatusesKey]);
 
   useEffect(() => {
-    const socket = getOperationsSocket();
-    const refresh = () => load();
-    socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refresh);
-    return () => {
-      socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refresh);
-    };
+    load();
   }, [load]);
+
+  useOperationsSocketRefresh(() => load(), []);
 
   const s = stats || {};
   const areas = s.areas || [];
@@ -343,14 +343,19 @@ export default function OperationsDashboard() {
     [s.areas_list]
   );
 
+  const slotsListKey = useMemo(
+    () => (s.slots_list || []).map((sl) => String(sl || '').trim()).filter(Boolean).join('\x1f'),
+    [stats]
+  );
+
   const slotToggleOptions = useMemo(() => {
-    const fromApi = (s.slots_list || []).map((sl) => String(sl || '').trim()).filter(Boolean);
-    return fromApi.length ? fromApi : FALLBACK_SLOT_OPTIONS;
-  }, [s.slots_list]);
+    if (!slotsListKey) return FALLBACK_SLOT_OPTIONS;
+    return slotsListKey.split('\x1f');
+  }, [slotsListKey]);
 
   useEffect(() => {
     setFilterSlots((prev) => pruneSlotFilter(prev, slotToggleOptions));
-  }, [dayFilter, slotToggleOptions]);
+  }, [dayFilter, slotsListKey]);
 
   return (
     <>

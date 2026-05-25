@@ -16,8 +16,9 @@ import {
   itemMatchesDay,
   itemMatchesSlots,
   pruneSlotFilter,
+  slotFilterValuesKey,
 } from '../utils/operationsFilters';
-import { getOperationsSocket } from '../utils/operationsSocket';
+import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
 import { useAuth } from '../context/AuthContext';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
@@ -162,17 +163,9 @@ export default function OperationsRiderSupervisorView() {
 
   useEffect(() => { if (ready && selectedBatch !== null) load(); }, [load, ready, selectedBatch, selectedDay]);
 
-  useEffect(() => {
-    const socket = getOperationsSocket();
-    const refresh = () => { loadBatches(); if (selectedBatch !== null) load(); };
-    socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refresh);
-    return () => {
-      socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refresh);
-    };
+  useOperationsSocketRefresh(() => {
+    loadBatches();
+    if (selectedBatch !== null) load();
   }, [load, loadBatches, selectedBatch]);
 
   const riderMap = useMemo(() => {
@@ -219,9 +212,14 @@ export default function OperationsRiderSupervisorView() {
     [statusEligibleGroups, selectedDay]
   );
 
+  const slotOptionsKey = useMemo(
+    () => slotFilterValuesKey(slotOptions),
+    [slotOptions]
+  );
+
   useEffect(() => {
     setSlotFilter((prev) => pruneSlotFilter(prev, slotOptions.map((o) => o.value)));
-  }, [selectedDay, slotOptions]);
+  }, [selectedDay, slotOptionsKey]);
 
   const filteredGroups = useMemo(() => {
     let list = statusEligibleGroups;

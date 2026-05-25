@@ -94,10 +94,23 @@ export function buildSlotFilterOptions(items, filterDay, getSlots = getSlotsForI
     .map((slot) => ({ value: slot, label: slot }));
 }
 
+/** Stable string key for slot option lists (avoids effect loops on new array references). */
+export function slotFilterValuesKey(optionValues) {
+  const opts = Array.isArray(optionValues) ? optionValues : [];
+  return opts
+    .map((v) => normalizeForCompare(typeof v === 'string' ? v : v?.value))
+    .filter(Boolean)
+    .join('\x1f');
+}
+
 export function pruneSlotFilter(selected, optionValues) {
   const list = Array.isArray(selected) ? selected : [];
   const opts = Array.isArray(optionValues) ? optionValues : [];
-  if (!opts.length) return list;
+  if (!opts.length) {
+    return list.length ? [] : list;
+  }
   const allowed = new Set(opts.map((v) => normalizeForCompare(typeof v === 'string' ? v : v?.value)));
-  return list.filter((s) => allowed.has(normalizeForCompare(s)));
+  const next = list.filter((s) => allowed.has(normalizeForCompare(s)));
+  if (next.length === list.length && next.every((v, i) => v === list[i])) return list;
+  return next;
 }
