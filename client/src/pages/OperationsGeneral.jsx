@@ -4,13 +4,14 @@ import { getOperationsSocket } from '../utils/operationsSocket';
 import { useAuth } from '../context/AuthContext';
 import OperationsTargetSection from '../components/OperationsTargetSection';
 import { ORDER_TYPE_FILTERS } from '../utils/operationsOrderTypes';
+import { pruneSlotFilter } from '../utils/operationsFilters';
 
 const DELIVERY_STATUSES = ['Pending', 'Rider Assigned', 'Dispatched', 'Delivered', 'Returned to Farm'];
 
 const ORDER_TYPE_OPTIONS = ORDER_TYPE_FILTERS;
 
-const SLOT_OPTIONS = ['SLOT 1', 'SLOT 2', 'SLOT 3'];
 const DAY_OPTIONS = ['Day 1', 'Day 2', 'Day 3'];
+const FALLBACK_SLOT_OPTIONS = ['Slot 1', 'Slot 2', 'Slot 3'];
 
 function pct(a, b) {
   if (!b) return '0%';
@@ -241,15 +242,16 @@ function MultiSelectDropdown({
   );
 }
 
-function SlotToggleButtons({ values = [], onChange }) {
+function SlotToggleButtons({ options = [], values = [], onChange }) {
   const toggle = (slot) => {
     onChange(values.includes(slot) ? values.filter((s) => s !== slot) : [...values, slot]);
   };
+  const slots = options.length ? options : FALLBACK_SLOT_OPTIONS;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
       <label style={{ display: 'block', fontSize: '10px', color: '#666' }}>Slot</label>
-      <div style={{ display: 'flex', gap: '6px' }}>
-        {SLOT_OPTIONS.map((slot) => {
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        {slots.map((slot) => {
           const on = values.includes(slot);
           return (
             <button
@@ -262,7 +264,7 @@ function SlotToggleButtons({ values = [], onChange }) {
                 fontSize: '11px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
               }}
             >
-              {slot.replace('SLOT ', 'Slot ')}
+              {slot}
             </button>
           );
         })}
@@ -340,6 +342,15 @@ export default function OperationsDashboard() {
     () => (s.areas_list || []).map((a) => ({ value: a, label: a })),
     [s.areas_list]
   );
+
+  const slotToggleOptions = useMemo(() => {
+    const fromApi = (s.slots_list || []).map((sl) => String(sl || '').trim()).filter(Boolean);
+    return fromApi.length ? fromApi : FALLBACK_SLOT_OPTIONS;
+  }, [s.slots_list]);
+
+  useEffect(() => {
+    setFilterSlots((prev) => pruneSlotFilter(prev, slotToggleOptions));
+  }, [dayFilter, slotToggleOptions]);
 
   return (
     <>
@@ -453,7 +464,7 @@ export default function OperationsDashboard() {
             />
             <MultiSelectDropdown label="Order type" options={ORDER_TYPE_OPTIONS} values={filterOrderTypes} onChange={setFilterOrderTypes} placeholder="All types" width={220} />
           </div>
-          <SlotToggleButtons values={filterSlots} onChange={setFilterSlots} />
+          <SlotToggleButtons options={slotToggleOptions} values={filterSlots} onChange={setFilterSlots} />
         </div>
 
         {err && (

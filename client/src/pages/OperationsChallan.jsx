@@ -16,6 +16,12 @@ import {
   normalizeForCompare,
   DAY_OPTIONS,
 } from '../utils/orderTags';
+import {
+  buildSlotFilterOptions,
+  itemMatchesDay,
+  itemMatchesSlots,
+  pruneSlotFilter,
+} from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
@@ -908,23 +914,22 @@ export default function OperationsChallan() {
   );
 
   const dayOptions  = useMemo(() => [...new Set(challans.map((c) => String(c.day || '').trim()).filter(Boolean))].sort(), [challans]);
-  const slotOptions = useMemo(() => {
-    const all = new Set();
-    challans.forEach((c) => String(c.slot || '').split(',').map((s) => s.trim()).filter(Boolean).forEach((s) => all.add(s)));
-    return [...all].sort();
-  }, [challans]);
-  const slotFilterOptions = useMemo(() => slotOptions.map((s) => ({ value: s, label: s })), [slotOptions]);
+  const slotFilterOptions = useMemo(
+    () => buildSlotFilterOptions(challans, filterDay),
+    [challans, filterDay]
+  );
+
+  useEffect(() => {
+    setFilterSlot((prev) => pruneSlotFilter(prev, slotFilterOptions.map((o) => o.value)));
+  }, [filterDay, slotFilterOptions]);
   const statusFilterOptions = useMemo(() => STATUS_STYLES ? Object.keys(STATUS_STYLES).map((s) => ({ value: s, label: s })) : [], []);
 
   const displayRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     const challanQ = challanSearch.trim().toLowerCase();
     return challans.filter((c) => {
-      if (filterDay && normalizeForCompare(c.day) !== normalizeForCompare(filterDay)) return false;
-      if (filterSlot.length) {
-        const slots = String(c.slot || '').split(',').map((v) => v.trim()).filter(Boolean);
-        if (!filterSlot.some((slot) => slots.some((s) => normalizeForCompare(s) === normalizeForCompare(slot)))) return false;
-      }
+      if (filterDay && !itemMatchesDay(c, filterDay)) return false;
+      if (filterSlot.length && !itemMatchesSlots(c, filterSlot, filterDay)) return false;
       if (filterOrderType.length && !challanMatchesOrderTypeFilter(c, filterOrderType)) return false;
       if (filterStatus.length && !filterStatus.includes(challanDerivedStatus(c))) return false;
       if (q) {

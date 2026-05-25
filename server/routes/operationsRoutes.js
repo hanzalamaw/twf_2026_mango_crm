@@ -1,6 +1,11 @@
 import crypto from "crypto";
 import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
+import {
+  syncChallanOrdersDeliveryStatusToSheet,
+  syncDeliveryStatusBatchToSheet,
+  syncDeliveryStatusToSheet,
+} from "../utils/googleSheetDeliveryStatus.js";
 
 const ALLOWED_STATUSES = ["Pending", "Rider Assigned", "Dispatched", "Delivered", "Returned to Farm"];
 
@@ -196,17 +201,26 @@ const LINE_COW_MULTIPLIER = 7;
 
 const GSEP = "\x1F";
 
+/** Cow (standard/premium/waqf/exclusive) vs goat (super/premium/exclusive goat) — separate challans when generating data. */
+function challanProductFamily(orderType) {
+  const c = classifyHissa(orderType);
+  if (c === "super_goat" || c === "premium_goat" || c === "exclusive_goat") return "goat";
+  if (c === "premium" || c === "standard" || c === "waqf" || c === "exclusive") return "cow";
+  return "other";
+}
+
 function groupKeyForOrder(row) {
-  // Non-waqf: day + slot + address (same address, different slot → separate challans).
-  // Waqf: customer (or address fallback) + day only — same customer splits per day; slots on that day share one waqf challan.
+  // Non-waqf cow/goat: family + day + slot + address (cow and goat never share one challan).
+  // Waqf: customer (or address fallback) + day only — always cow family; slots on that day share one waqf challan.
   const dayPart = normalizeDay(row.day);
   const slotPart = normalizeSlot(row.slot);
   const addrPart = normalizeAddr(row.address);
   if (classifyHissa(row.order_type) === "waqf") {
     const customerId = String(row.customer_id || "").trim().toLowerCase();
-    return `waqf${GSEP}${customerId || addrPart}${GSEP}${dayPart}`;
+    return `cow${GSEP}waqf${GSEP}${customerId || addrPart}${GSEP}${dayPart}`;
   }
-  return `${dayPart}${GSEP}${slotPart}${GSEP}${addrPart}`;
+  const family = challanProductFamily(row.order_type);
+  return `${family}${GSEP}${dayPart}${GSEP}${slotPart}${GSEP}${addrPart}`;
 }
 
 function uniqueRiderIdsFromOrders(orders = []) {
@@ -922,6 +936,9 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         ip_address: req.ip, user_agent: req.get("user-agent")
       });
       emitOperationsChanged(io, "challans:changed", { action: "status", challan_id: Number(id), delivery_status });
+      syncChallanOrdersDeliveryStatusToSheet(db, id, delivery_status).catch((err) => {
+        logError("OPERATIONS", "Sheet sync after challan status", err);
+      });
       res.json({ message: "Updated" });
     } catch (error) {
       logError("OPERATIONS", "Challan status error", error);
@@ -965,6 +982,16 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
            WHERE co.challan_id = ? AND o.delivery_status = 'Pending' AND ${nonWaqfOrder('o')}`,
           [id]
         );
+        const [assignedRows] = await db.execute(
+          `SELECT o.order_id
+           FROM orders o
+           INNER JOIN challan_orders co ON co.order_id = o.order_id
+           WHERE co.challan_id = ? AND o.delivery_status = 'Rider Assigned'`,
+          [id]
+        );
+        for (const row of assignedRows) {
+          syncDeliveryStatusToSheet(row.order_id, "Rider Assigned");
+        }
       }
 
       const newRiderLabel = formatRiderAuditValue(nextRiderId, nextRider);
@@ -1244,7 +1271,9 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         baseParams.push(...areaList);
       }
       if (slotList.length) {
-        baseConditions.push(`TRIM(COALESCE(o.slot, '')) IN (${slotList.map(() => "?").join(", ")})`);
+        baseConditions.push(
+          `(${slotList.map(() => "LOWER(TRIM(COALESCE(o.slot, ''))) = LOWER(TRIM(?))").join(" OR ")})`
+        );
         baseParams.push(...slotList);
       }
       const where = baseConditions.length ? `WHERE ${baseConditions.join(" AND ")}` : "";
@@ -1297,11 +1326,17 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
          WHERE ${listWhere.join(" AND ")} ORDER BY area`,
         listParams
       );
+      const slotListParams = [OPERATIONS_YEAR];
+      let slotDaySql = "";
+      if (day) {
+        slotDaySql = " AND LOWER(TRIM(COALESCE(orders.day, ''))) = LOWER(TRIM(?))";
+        slotListParams.push(String(day).trim());
+      }
       const [slotRows] = await db.execute(
         `SELECT DISTINCT TRIM(slot) AS slot FROM orders orders
          WHERE booking_date IS NOT NULL AND YEAR(booking_date) = ? AND ${allowedOrderType("orders")}
-           AND TRIM(COALESCE(slot, '')) != '' ORDER BY slot`,
-        [OPERATIONS_YEAR]
+           AND TRIM(COALESCE(slot, '')) != ''${slotDaySql} ORDER BY slot`,
+        slotListParams
       );
 
       const SLAUGHTER_TYPE_LABELS = {
@@ -1992,6 +2027,12 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       delete oldForAudit.supervisor_id;
       oldForAudit.supervisor = await supervisorLabelForAudit(db, prevSupervisorId);
 
+      const [ordersToReset] = await db.execute(
+        `SELECT order_id FROM orders
+         WHERE rider_id = ? AND delivery_status IN ('Pending', 'Rider Assigned')`,
+        [riderId]
+      );
+
       const conn = await db.getConnection();
       try {
         await conn.beginTransaction();
@@ -2015,6 +2056,10 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       } finally {
         conn.release();
       }
+
+      syncDeliveryStatusBatchToSheet(
+        ordersToReset.map((row) => ({ order_id: row.order_id, delivery_status: "Pending" }))
+      );
 
       await writeAuditLog(db, {
         user_id: req.userId,

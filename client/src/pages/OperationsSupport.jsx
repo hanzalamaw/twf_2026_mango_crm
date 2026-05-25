@@ -12,7 +12,14 @@ import {
   getChallanRowHighlight,
   isAffluentOrder,
   isSpecialRequestOrder,
+  normalizeForCompare,
 } from '../utils/orderTags';
+import {
+  buildSlotFilterOptions,
+  itemMatchesDay,
+  itemMatchesSlots,
+  pruneSlotFilter,
+} from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
@@ -28,7 +35,6 @@ import {
 } from '../utils/operationsOrderTypes';
 
 const ALL_STATUSES = ['Pending', 'Rider Assigned', 'Dispatched', 'Delivered', 'Returned to Farm'];
-function normalizeForCompare(value) { return String(value || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
 const STATUS_STYLES = {
   Pending:            { bg: '#F5F5F5', fg: '#666' },
@@ -97,7 +103,6 @@ function MultiSelectDropdown({ label, options = [], values = [], onChange, place
 }
 function splitUniqueCsvValues(values) { return [...new Set((Array.isArray(values) ? values : [values]).flatMap((v) => Array.isArray(v) ? v : String(v || '').split(',')).map((v) => String(v || '').trim()).filter(Boolean))]; }
 function MultiLineCell({ values, empty = '—' }) { const list = splitUniqueCsvValues(values); return list.length ? <div style={{ whiteSpace:'normal', wordBreak:'break-word', overflowWrap:'anywhere', lineHeight:1.45 }}>{list.map((v,i)=><div key={`${v}-${i}`}>{v}</div>)}</div> : <span style={{ color:'#ccc' }}>{empty}</span>; }
-function getGroupSlots(g) { const slots = new Set(); (g.slots || []).forEach((v)=>{ if(String(v||'').trim()) slots.add(String(v).trim()); }); String(g.slot || '').split(',').map((v)=>v.trim()).filter(Boolean).forEach((v)=>slots.add(v)); (g.orders || []).forEach((o)=>{ if(String(o.slot||'').trim()) slots.add(String(o.slot).trim()); }); return [...slots]; }
 const PAGE_SIZE = 50;
 
 export default function OperationsCustomerSupport() {
@@ -208,25 +213,20 @@ export default function OperationsCustomerSupport() {
 
   const modalDescription = useMemo(() => getDescriptionText({ ...(modalData?.challan || {}), ...(modal || {}), orders: modalData?.orders || [] }), [modal, modalData]);
 
-  const slotOptions = useMemo(() => {
-    const seen = new Map();
-    groups.forEach((g) => getGroupSlots(g).forEach((slot) => {
-      const key = normalizeForCompare(slot);
-      if (key && !seen.has(key)) seen.set(key, slot);
-    }));
-    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((slot) => ({ value: slot, label: slot }));
-  }, [groups]);
+  const slotOptions = useMemo(
+    () => buildSlotFilterOptions(groups, selectedDay),
+    [groups, selectedDay]
+  );
+
+  useEffect(() => {
+    setSlotFilter((prev) => pruneSlotFilter(prev, slotOptions.map((o) => o.value)));
+  }, [selectedDay, slotOptions]);
   const statusOptions = useMemo(() => ALL_STATUSES.map((status) => ({ value: status, label: status })), []);
 
   const filteredGroups = useMemo(() => {
     let list = groups;
-    if (selectedDay) list = list.filter((g) => normalizeForCompare(g.day) === normalizeForCompare(selectedDay));
-    if (slotFilter.length) {
-      list = list.filter((g) => {
-        const slots = getGroupSlots(g);
-        return slotFilter.some((slot) => slots.some((s) => normalizeForCompare(s) === normalizeForCompare(slot)));
-      });
-    }
+    if (selectedDay) list = list.filter((g) => itemMatchesDay(g, selectedDay));
+    if (slotFilter.length) list = list.filter((g) => itemMatchesSlots(g, slotFilter, selectedDay));
     if (statusFilter.length) list = list.filter((g) => statusFilter.includes(g.derived_status || 'Pending'));
     if (riderFilter) list = list.filter((g) => String(g.rider_id || '') === riderFilter);
     if (orderTypeFilter.length) {

@@ -15,7 +15,15 @@ import {
   isAffluentOrder,
   isDeliverySpecialRequestGroup,
   isSpecialRequestOrder,
+  normalizeForCompare,
 } from '../utils/orderTags';
+import {
+  buildSlotFilterOptions,
+  getSlotsForItem,
+  itemMatchesDay,
+  itemMatchesSlots,
+  pruneSlotFilter,
+} from '../utils/operationsFilters';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
@@ -359,50 +367,6 @@ function SearchableStatusSelect({ value, disabled, onChange, menuPlacement = 'be
   );
 }
 
-// ── helpers ──────────────────────────────────────────────────
-
-/**
- * Normalize a string for comparison: lowercase + collapse whitespace.
- * "DAY 1" === "day 1" === "Day 1", "SLOT 1" === "Slot 1" etc.
- */
-function normalizeForCompare(s) {
-  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Returns all slot strings for a group, normalised and deduped.
- * Reads from g.slots (array from orders), g.slot (comma string on challan),
- * and g.orders (embedded order rows) for maximum coverage.
- */
-function getGroupSlots(g) {
-  const s = new Set();
-  (g.slots || []).forEach((sl) => { if (sl && String(sl).trim()) s.add(String(sl).trim()); });
-  String(g.slot || '').split(',').map((x) => x.trim()).filter(Boolean).forEach((sl) => s.add(sl));
-  (g.orders || []).forEach((o) => { if (o.slot && String(o.slot).trim()) s.add(String(o.slot).trim()); });
-  return [...s];
-}
-
-/**
- * Check whether a group matches the selected slot filters.
- * Comparison is fully case-insensitive and whitespace-collapsed.
- * "SLOT 1" matches "Slot 1" matches "slot 1".
- */
-function groupMatchesSlots(g, filterSlots) {
-  if (!filterSlots.length) return true;
-  const groupSlots = getGroupSlots(g).map(normalizeForCompare);
-  return filterSlots.some((fs) => groupSlots.includes(normalizeForCompare(fs)));
-}
-
-/**
- * Check whether a group matches the selected day filter.
- * Comparison is fully case-insensitive and whitespace-collapsed.
- * "DAY 1" matches "Day 1" matches "day 1".
- */
-function groupMatchesDay(g, filterDay) {
-  if (!filterDay) return true;
-  return normalizeForCompare(g.day) === normalizeForCompare(filterDay);
-}
-
 export default function OperationsSpecialRequest() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { authFetch } = useAuth();
@@ -508,20 +472,17 @@ export default function OperationsSpecialRequest() {
     [groups]
   );
 
-  const slotOptions = useMemo(() => {
-    const seen = new Map(); // normalised key -> display label
-    for (const g of specialRequestGroups) {
-      getGroupSlots(g).forEach((sl) => {
-        const key = normalizeForCompare(sl);
-        if (key && !seen.has(key)) seen.set(key, sl);
-      });
-    }
-    return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [specialRequestGroups]);
+  const slotFilterOptions = useMemo(
+    () => buildSlotFilterOptions(specialRequestGroups, filterDay),
+    [specialRequestGroups, filterDay]
+  );
+
+  useEffect(() => {
+    setFilterSlots((prev) => pruneSlotFilter(prev, slotFilterOptions.map((o) => o.value)));
+  }, [filterDay, slotFilterOptions]);
 
   const orderTypeOptions = ORDER_TYPE_FILTERS;
   const statusOptions = useMemo(() => STATUSES.map((s) => ({ value: s, label: s })), []);
-  const slotFilterOptions = useMemo(() => slotOptions.map((s) => ({ value: s, label: s })), [slotOptions]);
 
   // ── filter + sort ────────────────────────────────────────────
   // All string comparisons go through normalizeForCompare so that
@@ -543,8 +504,8 @@ export default function OperationsSpecialRequest() {
       list = list.filter((g) => String(g.challan_id || '').toLowerCase().includes(challanQ));
     }
 
-    if (filterDay) list = list.filter((g) => groupMatchesDay(g, filterDay));
-    if (filterSlots.length) list = list.filter((g) => groupMatchesSlots(g, filterSlots));
+    if (filterDay) list = list.filter((g) => itemMatchesDay(g, filterDay));
+    if (filterSlots.length) list = list.filter((g) => itemMatchesSlots(g, filterSlots, filterDay));
     if (filterStatus.length) list = list.filter((g) => filterStatus.includes(g.derived_status || 'Pending'));
     if (filterRider) list = list.filter((g) => String(g.rider_id || '') === filterRider);
     if (filterOrderType.length) list = list.filter((g) => groupMatchesOrderTypeFilter(g, filterOrderType));
@@ -554,8 +515,8 @@ export default function OperationsSpecialRequest() {
       const dayA = normalizeForCompare(a.day);
       const dayB = normalizeForCompare(b.day);
       if (dayA !== dayB) return dayA.localeCompare(dayB);
-      const slotA = normalizeForCompare(getGroupSlots(a)[0] || '');
-      const slotB = normalizeForCompare(getGroupSlots(b)[0] || '');
+      const slotA = normalizeForCompare(getSlotsForItem(a, filterDay)[0] || '');
+      const slotB = normalizeForCompare(getSlotsForItem(b, filterDay)[0] || '');
       if (slotA !== slotB) return slotA.localeCompare(slotB, undefined, { numeric: true });
       return String(a.address || '').trim().toLowerCase()
         .localeCompare(String(b.address || '').trim().toLowerCase());
@@ -823,8 +784,8 @@ export default function OperationsSpecialRequest() {
             </button>
             {slotDropdownOpen && (
               <div style={{ position: 'absolute', zIndex: 50, left: 0, top: 'calc(100% + 4px)', minWidth: '100%', width: 'max-content', maxWidth: '260px', maxHeight: '200px', overflow: 'auto', border: '1px solid #e0e0e0', borderRadius: '8px', background: '#fff', padding: '6px 4px', boxShadow: '0 6px 18px rgba(0,0,0,0.1)' }}>
-                {slotOptions.length === 0 ? (
-                  <div style={{ padding: '8px 10px', fontSize: '10px', color: '#aaa' }}>No slots available</div>
+                {slotFilterOptions.length === 0 ? (
+                  <div style={{ padding: '8px 10px', fontSize: '10px', color: '#aaa' }}>No slots for this day</div>
                 ) : (
                   <>
                     {filterSlots.length > 0 && (
@@ -837,7 +798,7 @@ export default function OperationsSpecialRequest() {
                         Clear selection
                       </div>
                     )}
-                    {slotOptions.map((s) => (
+                    {slotFilterOptions.map(({ value: s }) => (
                       <label
                         key={s}
                         style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 10px', fontSize: '10px', cursor: 'pointer', borderRadius: '5px', background: isSlotSelected(s) ? '#FFF4F0' : 'transparent', color: isSlotSelected(s) ? '#FF5722' : '#333', fontWeight: isSlotSelected(s) ? '600' : '400' }}
