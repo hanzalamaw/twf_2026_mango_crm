@@ -17,6 +17,75 @@ function pct(a, b) {
   return `${Math.round((a / b) * 100)}%`;
 }
 
+const COW_TYPE_KEYS = ['premium_cow', 'standard_cow', 'waqf_cow', 'exclusive_cow'];
+const GOAT_TYPE_KEYS = ['premium_goat', 'super_goat', 'exclusive_goat'];
+
+function rowsForKeys(byType, keys) {
+  const map = Object.fromEntries((byType || []).map((r) => [r.key, r]));
+  return keys.map((key) => {
+    const row = map[key];
+    return {
+      key,
+      label: row?.label || key,
+      start: Number(row?.start) || 0,
+      end: Number(row?.end) || 0,
+    };
+  });
+}
+
+function SlaughterPackingDetailCard({ label, total, rows, accent, footnote }) {
+  const t = total && typeof total === 'object'
+    ? total
+    : { start: 0, end: 0 };
+
+  return (
+    <div className="od-detail-stat-card" style={{
+      background: '#fff',
+      border: '1px solid #e8e8e8',
+      borderRadius: '14px',
+      padding: '16px 18px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
+      borderLeft: `4px solid ${accent || '#FF5722'}`,
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: '320px',
+      height: '100%',
+      boxSizing: 'border-box',
+    }}>
+      <div style={{ fontSize: '11px', color: '#888', fontWeight: '600', marginBottom: '8px' }}>{label}</div>
+      <div style={{ fontSize: '28px', fontWeight: '700', color: '#222', lineHeight: 1.1, marginBottom: '4px' }}>
+        {t.start} / {t.end}
+      </div>
+      <div style={{ fontSize: '10px', color: '#aaa', marginBottom: footnote ? '6px' : '12px' }}>start / end</div>
+      {footnote && (
+        <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '12px' }}>{footnote}</div>
+      )}
+      <div style={{
+        flex: 1, borderTop: '1px solid #f0f0f0', paddingTop: '10px',
+        display: 'flex', flexDirection: 'column', gap: '6px', overflowY: 'auto',
+      }}>
+        {rows.map((row) => (
+          <div
+            key={row.key}
+            style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              gap: '10px', padding: '8px 10px', background: '#fafafa', borderRadius: '8px',
+              fontSize: '11px',
+            }}
+          >
+            <span style={{ color: '#444', fontWeight: '600', flex: 1, minWidth: 0, lineHeight: 1.35 }}>{row.label}</span>
+            <span style={{ color: '#222', fontWeight: '600', whiteSpace: 'nowrap', textAlign: 'right' }}>
+              <span style={{ color: accent }}>{row.start}</span>
+              {' / '}
+              <span>{row.end}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StatCard({ label, value, sub, accent }) {
   return (
     <div className="od-stat-card" style={{
@@ -280,6 +349,8 @@ export default function OperationsDashboard() {
           .od-stat-grid { grid-template-columns: repeat(2, 1fr) !important; }
           .od-stat-grid-centered { grid-template-columns: repeat(2, 1fr) !important; }
           .od-stat-grid-centered .od-stat-card-wrap { grid-column: auto !important; }
+          .od-slaughter-pack-grid { grid-template-columns: 1fr !important; }
+          .od-detail-stat-card { min-height: 0 !important; max-height: none !important; }
           .od-filters-row { flex-direction: column !important; align-items: stretch !important; }
           .od-area-table { font-size: 10px !important; }
           .od-rider-grid { grid-template-columns: 1fr !important; }
@@ -324,6 +395,9 @@ export default function OperationsDashboard() {
         .od-stat-grid-centered { align-items: stretch; }
         .od-stat-card-wrap { min-height: 0; height: 100%; display: flex; }
         .od-stat-card-wrap .od-stat-card { flex: 1; }
+        @media (max-width: 1100px) {
+          .od-slaughter-pack-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
       `}</style>
 
       <div className="od-root" style={{
@@ -414,22 +488,42 @@ export default function OperationsDashboard() {
                 onStatusChange={setFilterStatuses}
               />
 
-              <div className="od-stat-grid od-stat-grid-centered" style={{
-                display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
-                width: '100%', gap: '12px', marginBottom: '24px', alignItems: 'stretch',
-              }}>
-                <div className="od-stat-card-wrap" style={{ gridColumn: 2 }}>
-                  <StatCard label="Total Cows Slaughtered" value={slaughter.cows_slaughtered} accent="#795548" />
-                </div>
-                <div className="od-stat-card-wrap" style={{ gridColumn: 3 }}>
-                  <StatCard label="Total Goats Slaughtered" value={slaughter.goats_slaughtered} accent="#8D6E63" />
-                </div>
-                <div className="od-stat-card-wrap" style={{ gridColumn: 4 }}>
-                  <StatCard label="Total Hissa Packed" value={packing.hissa_packed} accent="#009688" />
-                </div>
-                <div className="od-stat-card-wrap" style={{ gridColumn: 5 }}>
-                  <StatCard label="Total Goats Packed" value={packing.goats_packed} accent="#00796B" />
-                </div>
+              <div
+                className="od-stat-grid od-slaughter-pack-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                  width: '100%',
+                  gap: '12px',
+                  marginBottom: '24px',
+                  alignItems: 'stretch',
+                }}
+              >
+                <SlaughterPackingDetailCard
+                  label="Total Cows Slaughtered"
+                  total={slaughter.cows_slaughtered}
+                  rows={rowsForKeys(slaughter.by_type, COW_TYPE_KEYS)}
+                  accent="#795548"
+                />
+                <SlaughterPackingDetailCard
+                  label="Total Goats Slaughtered"
+                  total={slaughter.goats_slaughtered}
+                  rows={rowsForKeys(slaughter.by_type, GOAT_TYPE_KEYS)}
+                  accent="#8D6E63"
+                />
+                <SlaughterPackingDetailCard
+                  label="Total Hissa Packed"
+                  total={packing.hissa_packed}
+                  rows={rowsForKeys(packing.by_type, COW_TYPE_KEYS)}
+                  accent="#009688"
+                  footnote="Cow counts ×7 hissa"
+                />
+                <SlaughterPackingDetailCard
+                  label="Total Goats Packed"
+                  total={packing.goats_packed}
+                  rows={rowsForKeys(packing.by_type, GOAT_TYPE_KEYS)}
+                  accent="#00796B"
+                />
               </div>
 
               {areas.length > 0 && (

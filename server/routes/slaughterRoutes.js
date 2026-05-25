@@ -7,6 +7,7 @@ const VALID_TYPES = new Set([
   "exclusive_cow",
   "premium_goat",
   "super_goat",
+  "exclusive_goat",
 ]);
 
 function parseDay(raw) {
@@ -25,6 +26,7 @@ function parseSequence(animalType, animalNumber) {
     exclusive_cow: /^E(\d+)$/,
     premium_goat: /^GP(\d+)$/,
     super_goat: /^GS-(\d+)$/,
+    exclusive_goat: /^GE(\d+)$/,
   };
   const re = patterns[animalType];
   if (!re) return null;
@@ -49,6 +51,8 @@ function formatNumber(animalType, seq) {
       return `GP${s}`;
     case "super_goat":
       return `GS-${s}`;
+    case "exclusive_goat":
+      return `GE${s}`;
     default:
       return String(s);
   }
@@ -78,10 +82,12 @@ async function ensureSlaughterTables(db) {
       group_id INT NOT NULL,
       day TINYINT NOT NULL,
       animal_type ENUM(
-        'premium_cow','standard_cow','waqf_cow','exclusive_cow','premium_goat','super_goat'
+        'premium_cow','standard_cow','waqf_cow','exclusive_cow',
+        'premium_goat','super_goat','exclusive_goat'
       ) NOT NULL,
       animal_number VARCHAR(32) NOT NULL,
       slaughter_time DATETIME NOT NULL,
+      slaughter_end_time DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_slaughter_day_type (day, animal_type),
@@ -89,6 +95,23 @@ async function ensureSlaughterTables(db) {
       INDEX idx_slaughter_time (slaughter_time)
     )
   `);
+  try {
+    await db.execute(
+      `ALTER TABLE slaughter_records ADD COLUMN slaughter_end_time DATETIME NULL AFTER slaughter_time`
+    );
+  } catch (e) {
+    if (!String(e?.message || "").includes("Duplicate column")) throw e;
+  }
+  try {
+    await db.execute(`
+      ALTER TABLE slaughter_records MODIFY animal_type ENUM(
+        'premium_cow','standard_cow','waqf_cow','exclusive_cow',
+        'premium_goat','super_goat','exclusive_goat'
+      ) NOT NULL
+    `);
+  } catch (e) {
+    logError("SLAUGHTER", "Enum migration (exclusive_goat)", e);
+  }
 }
 
 async function fetchRoleSlaughterFlags(db, userId) {
@@ -222,7 +245,9 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
       );
 
       const [statsRows] = await db.execute(
-        `SELECT group_id, animal_type, COUNT(*) AS cnt
+        `SELECT group_id, animal_type,
+                COUNT(*) AS start_cnt,
+                SUM(slaughter_end_time IS NOT NULL) AS end_cnt
          FROM slaughter_records WHERE day = ?
          GROUP BY group_id, animal_type`,
         [day]
@@ -231,7 +256,10 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
       const statsMap = {};
       for (const row of statsRows) {
         if (!statsMap[row.group_id]) statsMap[row.group_id] = {};
-        statsMap[row.group_id][row.animal_type] = Number(row.cnt) || 0;
+        statsMap[row.group_id][row.animal_type] = {
+          start: Number(row.start_cnt) || 0,
+          end: Number(row.end_cnt) || 0,
+        };
       }
 
       const data = groups.map((g) => ({
@@ -297,7 +325,7 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
 
       const [rows] = await db.execute(
         `SELECT s.slaughter_id, s.group_id, s.day, s.animal_type, s.animal_number,
-                s.slaughter_time, g.group_name
+                s.slaughter_time, s.slaughter_end_time, g.group_name
          FROM slaughter_records s
          JOIN slaughter_qassai_groups g ON g.group_id = s.group_id
          WHERE s.group_id = ? AND s.day = ?
@@ -309,10 +337,112 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
         slaughters: rows.map((r) => ({
           ...r,
           slaughter_time: formatRowTime(r.slaughter_time),
+          slaughter_end_time: formatRowTime(r.slaughter_end_time),
         })),
       });
     } catch (error) {
       logError("SLAUGHTER", "List group slaughters error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.get("/api/operations/slaughter/pending-number", verifyToken, async (req, res) => {
+    try {
+      if (!(await assertSlaughter(req, res, db))) return;
+      const day = parseDay(req.query.day);
+      const groupId = Number(req.query.group_id);
+      const animalType = String(req.query.type || "").trim();
+      if (!day || !Number.isFinite(groupId) || !VALID_TYPES.has(animalType)) {
+        return res.status(400).json({ message: "Invalid request" });
+      }
+
+      const [rows] = await db.execute(
+        `SELECT slaughter_id, animal_number FROM slaughter_records
+         WHERE group_id = ? AND day = ? AND animal_type = ? AND slaughter_end_time IS NULL
+         ORDER BY slaughter_time ASC, slaughter_id ASC
+         LIMIT 1`,
+        [groupId, day, animalType]
+      );
+
+      if (!rows.length) {
+        return res.json({ slaughter_id: null, animal_number: "" });
+      }
+      res.json({
+        slaughter_id: rows[0].slaughter_id,
+        animal_number: rows[0].animal_number,
+      });
+    } catch (error) {
+      logError("SLAUGHTER", "Pending number error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.post("/api/operations/slaughter/slaughters/end", verifyToken, async (req, res) => {
+    try {
+      if (!(await assertSlaughter(req, res, db))) return;
+      const day = parseDay(req.body?.day);
+      const groupId = Number(req.body?.group_id);
+      const animalType = String(req.body?.animal_type || "").trim();
+      if (!day || !Number.isFinite(groupId)) return res.status(400).json({ message: "Invalid request" });
+      if (!VALID_TYPES.has(animalType)) return res.status(400).json({ message: "Invalid animal type" });
+
+      const [groupRows] = await db.execute(
+        `SELECT group_id FROM slaughter_qassai_groups WHERE group_id = ? AND day = ?`,
+        [groupId, day]
+      );
+      if (!groupRows.length) return res.status(404).json({ message: "Qassai group not found for this day" });
+
+      const rawNumber = req.body?.animal_number;
+      let targetRow = null;
+
+      if (rawNumber !== undefined && String(rawNumber).trim() !== "") {
+        const animal_number = normalizeNumberInput(animalType, rawNumber);
+        if (!animal_number) return res.status(400).json({ message: "Invalid animal number format" });
+        const [byNumber] = await db.execute(
+          `SELECT slaughter_id, animal_number, slaughter_end_time FROM slaughter_records
+           WHERE group_id = ? AND day = ? AND animal_type = ?
+             AND UPPER(TRIM(animal_number)) = UPPER(TRIM(?))
+           LIMIT 1`,
+          [groupId, day, animalType, animal_number]
+        );
+        if (!byNumber.length) {
+          return res.status(404).json({ message: "No matching slaughter start found for this number" });
+        }
+        if (byNumber[0].slaughter_end_time) {
+          return res.status(409).json({ message: "This slaughter already has an end time recorded" });
+        }
+        targetRow = byNumber[0];
+      } else {
+        const [pending] = await db.execute(
+          `SELECT slaughter_id, animal_number FROM slaughter_records
+           WHERE group_id = ? AND day = ? AND animal_type = ? AND slaughter_end_time IS NULL
+           ORDER BY slaughter_time ASC, slaughter_id ASC
+           LIMIT 1`,
+          [groupId, day, animalType]
+        );
+        if (!pending.length) {
+          return res.status(404).json({ message: "No pending slaughter start for this type in this group" });
+        }
+        targetRow = pending[0];
+      }
+
+      const slaughter_end_time = toMysqlDatetime(req.body?.slaughter_end_time);
+
+      await db.execute(
+        `UPDATE slaughter_records SET slaughter_end_time = ? WHERE slaughter_id = ?`,
+        [slaughter_end_time, targetRow.slaughter_id]
+      );
+
+      res.json({
+        slaughter_id: targetRow.slaughter_id,
+        group_id: groupId,
+        day,
+        animal_type: animalType,
+        animal_number: targetRow.animal_number,
+        slaughter_end_time: formatRowTime(slaughter_end_time),
+      });
+    } catch (error) {
+      logError("SLAUGHTER", "Slaughter end error", error);
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -384,6 +514,13 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
           ? toMysqlDatetime(req.body.slaughter_time)
           : row.slaughter_time;
 
+      const slaughter_end_time =
+        req.body?.slaughter_end_time !== undefined
+          ? req.body.slaughter_end_time
+            ? toMysqlDatetime(req.body.slaughter_end_time)
+            : null
+          : row.slaughter_end_time;
+
       const groupId =
         req.body?.group_id !== undefined ? Number(req.body.group_id) : row.group_id;
       const day = req.body?.day !== undefined ? parseDay(req.body.day) : row.day;
@@ -401,9 +538,10 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
 
       await db.execute(
         `UPDATE slaughter_records
-         SET group_id = ?, day = ?, animal_type = ?, animal_number = ?, slaughter_time = ?
+         SET group_id = ?, day = ?, animal_type = ?, animal_number = ?,
+             slaughter_time = ?, slaughter_end_time = ?
          WHERE slaughter_id = ?`,
-        [groupId, day, animalType, animal_number, slaughter_time, slaughterId]
+        [groupId, day, animalType, animal_number, slaughter_time, slaughter_end_time, slaughterId]
       );
 
       res.json({
@@ -413,6 +551,7 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
         animal_type: animalType,
         animal_number,
         slaughter_time: formatRowTime(slaughter_time),
+        slaughter_end_time: formatRowTime(slaughter_end_time),
       });
     } catch (error) {
       logError("SLAUGHTER", "Update slaughter error", error);
@@ -489,7 +628,7 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
 
       const [rows] = await db.execute(
         `SELECT s.slaughter_id, s.group_id, g.group_name, s.day, s.animal_type,
-                s.animal_number, s.slaughter_time, s.created_at
+                s.animal_number, s.slaughter_time, s.slaughter_end_time, s.created_at
          FROM slaughter_records s
          JOIN slaughter_qassai_groups g ON g.group_id = s.group_id
          ${where}
@@ -502,6 +641,7 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
         data: rows.map((r) => ({
           ...r,
           slaughter_time: formatRowTime(r.slaughter_time),
+          slaughter_end_time: formatRowTime(r.slaughter_end_time),
         })),
         total,
         page,

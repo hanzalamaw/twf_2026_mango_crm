@@ -109,10 +109,255 @@ function drawPdfHeaderBadge(doc, label, x, baselineY, variant) {
   doc.text(label, x + paddingX, baselineY - 1);
 }
 
+function getPrimarySlot(slotStr) {
+  const parts = String(slotStr || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return parts[0] || '';
+}
+
+function slotSortKey(slot) {
+  const m = String(slot || '').match(/(\d+)/);
+  return m ? Number(m[1]) : 9999;
+}
+
+function formatSlotDividerLabel(slot) {
+  const s = getPrimarySlot(slot);
+  const m = s.match(/slot\s*(\d+)/i);
+  if (m) return `SLOT ${m[1]}`;
+  const num = s.match(/^(\d+)$/);
+  if (num) return `SLOT ${num[1]}`;
+  return (s || 'SLOT').toUpperCase();
+}
+
+function compareChallanPrintOrder(a, b) {
+  const slotA = getPrimarySlot(a?.slot);
+  const slotB = getPrimarySlot(b?.slot);
+  const sk = slotSortKey(slotA) - slotSortKey(slotB);
+  if (sk !== 0) return sk;
+  const areaCmp = String(a?.area || '').localeCompare(String(b?.area || ''), undefined, { sensitivity: 'base' });
+  if (areaCmp !== 0) return areaCmp;
+  return Number(a?.challan_id || 0) - Number(b?.challan_id || 0);
+}
+
+function sortPrintItems(items) {
+  return [...items].sort((a, b) => compareChallanPrintOrder(a.challan, b.challan));
+}
+
+function sortChallanRowsForPrint(rows) {
+  return [...rows].sort(compareChallanPrintOrder);
+}
+
+function getChallanCustomerFields(c, orders, safe) {
+  const uniqueJoin = (arr) =>
+    [...new Set(arr.map((v) => String(v || '').trim()).filter(Boolean))].join(', ');
+  const customerId =
+    c.customer_ids_csv ||
+    c.customer_id ||
+    uniqueJoin(orders.map((o) => o.customer_id)) ||
+    '—';
+  const customerName =
+    c.booking_name ||
+    uniqueJoin(orders.map((o) => o.booking_name)) ||
+    '—';
+  const primaryContact =
+    c.contacts_csv ||
+    uniqueJoin(orders.map((o) => o.contact)) ||
+    '';
+  const altContact =
+    c.alt_contacts_csv ||
+    uniqueJoin(orders.map((o) => o.alt_contact)) ||
+    '';
+  const contact = (() => {
+    const p = safe(primaryContact, '');
+    const a = safe(altContact, '');
+    if (p && a) return `${p}  |  Alt: ${a}`;
+    if (p) return p;
+    if (a) return `Alt: ${a}`;
+    return '—';
+  })();
+  return { customerId, customerName, contact };
+}
+
+function drawSlotDividerPage(doc, slot, PW, PH) {
+  const label = formatSlotDividerLabel(slot);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(52);
+  doc.setTextColor(0, 0, 0);
+  doc.text(label, PW / 2, PH / 2, { align: 'center', baseline: 'middle' });
+}
+
+function drawStickerCheckbox(doc, x, y, label, lineEndX = null) {
+  const boxSize = 11;
+  doc.setDrawColor(50, 50, 50);
+  doc.setLineWidth(0.9);
+  doc.rect(x, y - boxSize + 3, boxSize, boxSize);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10.5);
+  doc.setTextColor(35, 35, 35);
+  const textX = x + boxSize + 8;
+  doc.text(label, textX, y);
+  if (lineEndX != null && label.endsWith(':')) {
+    const lineStart = textX + doc.getTextWidth(label) + 4;
+    doc.setDrawColor(30, 30, 30);
+    doc.setLineWidth(0.8);
+    doc.line(lineStart, y + 3, lineEndX, y + 3);
+  }
+}
+
+function drawOrderStickerPage(doc, layout, item, order, helpers) {
+  const { PW, PH, ML, MR, CONTENT_W } = layout;
+  const { safe, split, getChallanCustomerFields: getFields } = helpers;
+  const c = item.challan || {};
+  const orders = Array.isArray(item.orders) ? item.orders : [];
+  const { customerId, customerName, contact } = getFields(c, orders, safe);
+
+  const orderTypeNorm = normalizeOrderType(order.order_type) || safe(order.order_type, 'Hissa');
+  const shareholder = safe(order.shareholder_name || order.booking_name, '—');
+  const shareDesc = safe(order.description);
+
+  let y = 52;
+  const centerX = PW / 2;
+
+  const typeLines = split(orderTypeNorm, CONTENT_W - 48).slice(0, 3);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(28);
+  doc.setTextColor(0, 0, 0);
+  typeLines.forEach((line, i) => {
+    doc.text(line, centerX, y + i * 34, { align: 'center' });
+  });
+  y += typeLines.length * 34 + 10;
+
+  if (shareDesc) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(13);
+    doc.setTextColor(50, 50, 50);
+    const descLines = split(shareDesc, CONTENT_W - 48).slice(0, 4);
+    descLines.forEach((line, i) => {
+      doc.text(line, centerX, y + i * 18, { align: 'center' });
+    });
+    y += descLines.length * 18 + 4;
+  }
+
+  y += 8;
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(1);
+  doc.line(ML, y, MR, y);
+  y += 24;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(40, 40, 40);
+  doc.text(`Challan # ${safe(c.challan_id, '')}`, ML, y);
+  if (order.order_id) {
+    doc.text(`Order # ${order.order_id}`, MR, y, { align: 'right' });
+  }
+  y += 22;
+
+  const boxY = y;
+  const midX = ML + CONTENT_W / 2;
+  const leftX = ML + 20;
+  const rightX = midX + 20;
+  const colMaxW = CONTENT_W / 2 - 44;
+
+  const drawStickerInfoCell = (label, value, x, yPos) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(25, 25, 25);
+    doc.text(`${label}:`, x, yPos);
+    const labelW = doc.getTextWidth(`${label}: `);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(45, 45, 45);
+    const lines = doc.splitTextToSize(safe(value), colMaxW - labelW - 4).slice(0, 3);
+    doc.text(lines, x + labelW + 4, yPos);
+    return 14 * lines.length;
+  };
+
+  const infoRows = [
+    ['Customer ID', customerId, 'Address', c.address || '—'],
+    ['Customer Name', customerName, 'Area', c.area || '—'],
+    ['Contact', contact, 'Shareholder', shareholder],
+  ];
+  let boxH = 28;
+  infoRows.forEach(([ll, lv, rl, rv]) => {
+    boxH += Math.max(
+      doc.splitTextToSize(safe(lv), colMaxW).length,
+      doc.splitTextToSize(safe(rv), colMaxW).length
+    ) * 14 + 12;
+  });
+
+  doc.setFillColor(252, 252, 252);
+  doc.setDrawColor(215, 215, 215);
+  doc.setLineWidth(0.8);
+  doc.roundedRect(ML, boxY, CONTENT_W, boxH, 6, 6, 'FD');
+  doc.setDrawColor(235, 235, 235);
+  doc.line(midX, boxY + 12, midX, boxY + boxH - 12);
+
+  let rowY = boxY + 22;
+  infoRows.forEach(([ll, lv, rl, rv]) => {
+    const lh = drawStickerInfoCell(ll, lv, leftX, rowY);
+    const rh = drawStickerInfoCell(rl, rv, rightX, rowY);
+    rowY += Math.max(lh, rh) + 12;
+  });
+
+  const bottomY = boxY + boxH + 48;
+  const bottomMid = ML + CONTENT_W / 2;
+  const leftColX = ML + 8;
+  const rightColX = bottomMid + 16;
+  const rightColW = MR - rightColX - 8;
+  const sigLineEnd = bottomMid - 24;
+
+  const drawSigLine = (label, yPos) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(20, 20, 20);
+    doc.text(label, leftColX, yPos);
+    const labelW = doc.getTextWidth(label);
+    doc.setDrawColor(30, 30, 30);
+    doc.setLineWidth(0.8);
+    doc.line(leftColX + labelW + 4, yPos + 3, sigLineEnd, yPos + 3);
+  };
+
+  drawSigLine('Checked & Verified By:', bottomY);
+  drawSigLine('Customer Signature:', bottomY + 52);
+
+  const includesBoxY = bottomY - 8;
+  const includesOptions = [
+    'In Bone Meat',
+    'Boneless Meat',
+    'Paye',
+    'Kaleji & Dil',
+  ];
+  const optionLineH = 22;
+  const includesBoxH = 28 + includesOptions.length * optionLineH + optionLineH + 16;
+
+  doc.setFillColor(252, 252, 252);
+  doc.setDrawColor(215, 215, 215);
+  doc.setLineWidth(0.8);
+  doc.roundedRect(rightColX, includesBoxY, rightColW, includesBoxH, 6, 6, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(25, 25, 25);
+  doc.text('This Box Includes:', rightColX + 14, includesBoxY + 22);
+
+  let optY = includesBoxY + 40;
+  includesOptions.forEach((opt) => {
+    drawStickerCheckbox(doc, rightColX + 14, optY, opt);
+    optY += optionLineH;
+  });
+  drawStickerCheckbox(doc, rightColX + 14, optY, 'Other:', rightColX + rightColW - 14);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(160, 160, 160);
+  doc.text('THE WARSI FARM — paste on physical order', ML, PH - 28);
+}
+
 /* ─────────────────────────────────────────────
    generatePdf  –  exact challan design
    ───────────────────────────────────────────── */
-   async function generatePdf(items) {
+async function generatePdf(items, options = {}) {
+  const { includeSlotDividers = false } = options;
     const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   
     const PW = 595.28;
@@ -166,53 +411,40 @@ function drawPdfHeaderBadge(doc, label, x, baselineY, variant) {
       doc.line(valueX, y + 4, lineEndX, y + 4);
     };
   
-    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-      const item = items[itemIndex] || {};
+    const sortedItems = sortPrintItems(items);
+    let firstPage = true;
+    const nextPage = () => {
+      if (!firstPage) doc.addPage();
+      firstPage = false;
+    };
+    let lastSlotKey = null;
+    const layout = { PW, PH, ML, MR, CONTENT_W };
+    const pdfHelpers = { safe, split, getChallanCustomerFields };
+
+    for (const item of sortedItems) {
       const c = item.challan || {};
       const orders = Array.isArray(item.orders) ? item.orders : [];
-      const rider = item.rider || {};
-  
+
+      const primarySlot = getPrimarySlot(c.slot);
+      const slotKey = `${slotSortKey(primarySlot)}|${primarySlot}`;
+      if (includeSlotDividers && slotKey !== lastSlotKey) {
+        nextPage();
+        drawSlotDividerPage(doc, primarySlot, PW, PH);
+        lastSlotKey = slotKey;
+      }
+
       const modalPdfTotals = computeModalTotals(c, orders);
       const totalHissaText = formatTotalHissa(modalPdfTotals.total, modalPdfTotals);
       const tagSource = { ...c, orders, description: getDescriptionText({ ...c, orders }) };
       const challanTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
-  
-      const uniqueJoin = (arr) =>
-        [...new Set(arr.map((v) => String(v || '').trim()).filter(Boolean))].join(', ');
-      
-      const customerId =
-        c.customer_ids_csv ||
-        c.customer_id ||
-        uniqueJoin(orders.map((o) => o.customer_id)) ||
-        '—';
-      
-      const customerName =
-        c.booking_name ||
-        uniqueJoin(orders.map((o) => o.booking_name)) ||
-        '—';
-      
-      const primaryContact =
-        c.contacts_csv ||
-        uniqueJoin(orders.map((o) => o.contact)) ||
-        '';
-      const altContact =
-        c.alt_contacts_csv ||
-        uniqueJoin(orders.map((o) => o.alt_contact)) ||
-        '';
-      const contact = (() => {
-        const p = safe(primaryContact, '');
-        const a = safe(altContact, '');
-        if (p && a) return `${p}  |  Alt: ${a}`;
-        if (p) return p;
-        if (a) return `Alt: ${a}`;
-        return '—';
-      })();
-  
+
+      const { customerId, customerName, contact } = getChallanCustomerFields(c, orders, safe);
+
       let pageNo = 0;
       let orderIndex = 0;
-  
+
       while (orderIndex < Math.max(orders.length, 1)) {
-        if (itemIndex > 0 || pageNo > 0) doc.addPage();
+        nextPage();
         pageNo++;
   
         // Header — tag badge to the right of title (B&W: solid black pill for both tags)
@@ -480,8 +712,13 @@ function drawPdfHeaderBadge(doc, label, x, baselineY, variant) {
         doc.setTextColor(160, 160, 160);
         doc.text(`Page ${pageNo}`, MR, PH - 20, { align: 'right' });
       }
+
+      for (const o of orders) {
+        nextPage();
+        drawOrderStickerPage(doc, layout, item, o, pdfHelpers);
+      }
     }
-  
+
     doc.save(`challan-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
 
@@ -738,19 +975,37 @@ export default function OperationsChallan() {
   };
 
   const onPrintPdf = async () => {
-    const ids = displayRows.map((c) => c.challan_id);
-    if (!ids.length) return alert('No challans to print.');
+    const printAll = selectedIds.size === 0;
+    const printDay = filterDay || selectedDay;
+    if (!selectedBatch) return alert('Select a batch first.');
+    if (printAll) {
+      const dayCount = challans.filter(
+        (c) => normalizeForCompare(c.day) === normalizeForCompare(printDay)
+      ).length;
+      if (!dayCount) return alert(`No challans for ${printDay} in this batch.`);
+    } else {
+      const selectedRows = challans.filter((c) => selectedIds.has(c.challan_id));
+      if (!selectedRows.length) return alert('Select at least one challan to print, or clear selection to print all for the day.');
+    }
     setBusy(true); setErr('');
     try {
+      const body = printAll
+        ? { batch_id: selectedBatch, day: printDay }
+        : {
+            batch_id: selectedBatch,
+            challan_ids: sortChallanRowsForPrint(challans.filter((c) => selectedIds.has(c.challan_id))).map(
+              (c) => c.challan_id
+            ),
+          };
       const res = await authFetch(`${API_BASE}/operations/challans/bulk-detail`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batch_id: selectedBatch, challan_ids: ids }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || 'Could not build PDF');
       if (!Array.isArray(data.items) || data.items.length === 0) throw new Error('No data to print');
-      await generatePdf(data.items);
+      await generatePdf(data.items, { includeSlotDividers: printAll });
     } catch (e) { setErr(e.message || 'PDF generation failed'); }
     setBusy(false);
   };
@@ -845,8 +1100,9 @@ export default function OperationsChallan() {
           <MultiSelectDropdown label="Order Type" options={ORDER_TYPE_FILTERS} values={filterOrderType} onChange={setFilterOrderType} placeholder="All types" width={160} />
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button type="button" disabled={busy} onClick={onPrintPdf}
+              title={selectedIds.size ? `Print ${selectedIds.size} selected challan(s)` : `Print all challans for ${filterDay || selectedDay} in this batch (sorted by slot, then area)`}
               style={{ padding: '6px 13px', height: '29px', background: '#FF5722', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
-              Print PDF
+              Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}
             </button>
             <button type="button" onClick={load}
               style={{ padding: '6px 13px', height: '29px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>
@@ -865,7 +1121,7 @@ export default function OperationsChallan() {
         <div className="om-filter-toggle" style={{ display: 'none', gap: '8px', marginBottom: '8px', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: '1 1 120px', minWidth: 0, padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }} />
           <button type="button" className={`ops-filter-toggle-btn${mobileFiltersOpen ? ' is-open' : ''}`} onClick={() => setMobileFiltersOpen((v) => !v)}>⚙ Filters</button>
-          <button type="button" disabled={busy} onClick={onPrintPdf} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Print PDF</button>
+          <button type="button" disabled={busy} onClick={onPrintPdf} title={selectedIds.size ? `Print ${selectedIds.size} selected` : `Print all for ${filterDay || selectedDay}`} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
         </div>
         <div className="om-challan-mobile-actions" style={{ display: 'none' }}>
           <button type="button" onClick={load} style={{ background: '#fff', color: '#555', border: '1px solid #e0e0e0' }}>Refresh</button>

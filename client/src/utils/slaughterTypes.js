@@ -11,6 +11,7 @@ export const SLAUGHTER_ANIMAL_TYPES = [
   { key: 'exclusive_cow', label: 'Exclusive Cow' },
   { key: 'premium_goat', label: 'Premium Goat' },
   { key: 'super_goat', label: 'Super Goat' },
+  { key: 'exclusive_goat', label: 'Exclusive Goat' },
 ];
 
 export function animalTypeLabel(key) {

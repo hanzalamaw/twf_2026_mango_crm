@@ -7,6 +7,7 @@ const VALID_TYPES = new Set([
   "exclusive_cow",
   "premium_goat",
   "super_goat",
+  "exclusive_goat",
 ]);
 
 const TYPE_MULTIPLIER = {
@@ -16,6 +17,7 @@ const TYPE_MULTIPLIER = {
   exclusive_cow: 7,
   premium_goat: 1,
   super_goat: 1,
+  exclusive_goat: 1,
 };
 
 function parseDay(raw) {
@@ -34,6 +36,7 @@ function parseSequence(animalType, animalNumber) {
     exclusive_cow: /^E(\d+)$/,
     premium_goat: /^GP(\d+)$/,
     super_goat: /^GS-(\d+)$/,
+    exclusive_goat: /^GE(\d+)$/,
   };
   const re = patterns[animalType];
   if (!re) return null;
@@ -58,6 +61,8 @@ function formatNumber(animalType, seq) {
       return `GP${s}`;
     case "super_goat":
       return `GS-${s}`;
+    case "exclusive_goat":
+      return `GE${s}`;
     default:
       return String(s);
   }
@@ -72,12 +77,14 @@ function normalizeNumberInput(animalType, raw) {
 }
 
 function buildStatsFromCounts(counts = {}) {
-  const stats = { total_units: 0 };
+  const stats = { total_units: { start: 0, end: 0 } };
   for (const type of VALID_TYPES) {
-    const raw = Number(counts[type]) || 0;
-    const final = raw * (TYPE_MULTIPLIER[type] ?? 1);
-    stats[type] = final;
-    stats.total_units += final;
+    const rawStart = Number(counts[type]?.start) || 0;
+    const rawEnd = Number(counts[type]?.end) || 0;
+    const mult = TYPE_MULTIPLIER[type] ?? 1;
+    stats[type] = { start: rawStart * mult, end: rawEnd * mult };
+    stats.total_units.start += stats[type].start;
+    stats.total_units.end += stats[type].end;
   }
   return stats;
 }
@@ -98,10 +105,12 @@ async function ensureLineTables(db) {
       group_id INT NOT NULL,
       day TINYINT NOT NULL,
       animal_type ENUM(
-        'premium_cow','standard_cow','waqf_cow','exclusive_cow','premium_goat','super_goat'
+        'premium_cow','standard_cow','waqf_cow','exclusive_cow',
+        'premium_goat','super_goat','exclusive_goat'
       ) NOT NULL,
       animal_number VARCHAR(32) NOT NULL,
       recorded_time DATETIME NOT NULL,
+      recorded_end_time DATETIME NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_line_day_type (day, animal_type),
@@ -109,6 +118,23 @@ async function ensureLineTables(db) {
       INDEX idx_line_time (recorded_time)
     )
   `);
+  try {
+    await db.execute(
+      `ALTER TABLE line_records ADD COLUMN recorded_end_time DATETIME NULL AFTER recorded_time`
+    );
+  } catch (e) {
+    if (!String(e?.message || "").includes("Duplicate column")) throw e;
+  }
+  try {
+    await db.execute(`
+      ALTER TABLE line_records MODIFY animal_type ENUM(
+        'premium_cow','standard_cow','waqf_cow','exclusive_cow',
+        'premium_goat','super_goat','exclusive_goat'
+      ) NOT NULL
+    `);
+  } catch (e) {
+    logError("LINE", "Enum migration (exclusive_goat)", e);
+  }
 }
 
 async function fetchRoleLineFlags(db, userId) {
@@ -231,7 +257,9 @@ export const registerLineRoutes = (app, db, verifyToken) => {
       );
 
       const [statsRows] = await db.execute(
-        `SELECT group_id, animal_type, COUNT(*) AS cnt
+        `SELECT group_id, animal_type,
+                COUNT(*) AS start_cnt,
+                SUM(recorded_end_time IS NOT NULL) AS end_cnt
          FROM line_records WHERE day = ?
          GROUP BY group_id, animal_type`,
         [day]
@@ -240,7 +268,10 @@ export const registerLineRoutes = (app, db, verifyToken) => {
       const statsMap = {};
       for (const row of statsRows) {
         if (!statsMap[row.group_id]) statsMap[row.group_id] = {};
-        statsMap[row.group_id][row.animal_type] = Number(row.cnt) || 0;
+        statsMap[row.group_id][row.animal_type] = {
+          start: Number(row.start_cnt) || 0,
+          end: Number(row.end_cnt) || 0,
+        };
       }
 
       const data = groups.map((g) => ({
@@ -306,7 +337,7 @@ export const registerLineRoutes = (app, db, verifyToken) => {
 
       const [rows] = await db.execute(
         `SELECT r.record_id, r.group_id, r.day, r.animal_type, r.animal_number,
-                r.recorded_time, g.group_name
+                r.recorded_time, r.recorded_end_time, g.group_name
          FROM line_records r
          JOIN line_groups g ON g.group_id = r.group_id
          WHERE r.group_id = ? AND r.day = ?
@@ -318,10 +349,112 @@ export const registerLineRoutes = (app, db, verifyToken) => {
         records: rows.map((row) => ({
           ...row,
           recorded_time: formatRowTime(row.recorded_time),
+          recorded_end_time: formatRowTime(row.recorded_end_time),
         })),
       });
     } catch (error) {
       logError("LINE", "List group records error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.get("/api/operations/line/pending-number", verifyToken, async (req, res) => {
+    try {
+      if (!(await assertLine(req, res, db))) return;
+      const day = parseDay(req.query.day);
+      const groupId = Number(req.query.group_id);
+      const animalType = String(req.query.type || "").trim();
+      if (!day || !Number.isFinite(groupId) || !VALID_TYPES.has(animalType)) {
+        return res.status(400).json({ message: "Invalid request" });
+      }
+
+      const [rows] = await db.execute(
+        `SELECT record_id, animal_number FROM line_records
+         WHERE group_id = ? AND day = ? AND animal_type = ? AND recorded_end_time IS NULL
+         ORDER BY recorded_time ASC, record_id ASC
+         LIMIT 1`,
+        [groupId, day, animalType]
+      );
+
+      if (!rows.length) {
+        return res.json({ record_id: null, animal_number: "" });
+      }
+      res.json({
+        record_id: rows[0].record_id,
+        animal_number: rows[0].animal_number,
+      });
+    } catch (error) {
+      logError("LINE", "Pending number error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.post("/api/operations/line/records/end", verifyToken, async (req, res) => {
+    try {
+      if (!(await assertLine(req, res, db))) return;
+      const day = parseDay(req.body?.day);
+      const groupId = Number(req.body?.group_id);
+      const animalType = String(req.body?.animal_type || "").trim();
+      if (!day || !Number.isFinite(groupId)) return res.status(400).json({ message: "Invalid request" });
+      if (!VALID_TYPES.has(animalType)) return res.status(400).json({ message: "Invalid animal type" });
+
+      const [groupRows] = await db.execute(
+        `SELECT group_id FROM line_groups WHERE group_id = ? AND day = ?`,
+        [groupId, day]
+      );
+      if (!groupRows.length) return res.status(404).json({ message: "Line group not found for this day" });
+
+      const rawNumber = req.body?.animal_number;
+      let targetRow = null;
+
+      if (rawNumber !== undefined && String(rawNumber).trim() !== "") {
+        const animal_number = normalizeNumberInput(animalType, rawNumber);
+        if (!animal_number) return res.status(400).json({ message: "Invalid animal number format" });
+        const [byNumber] = await db.execute(
+          `SELECT record_id, animal_number, recorded_end_time FROM line_records
+           WHERE group_id = ? AND day = ? AND animal_type = ?
+             AND UPPER(TRIM(animal_number)) = UPPER(TRIM(?))
+           LIMIT 1`,
+          [groupId, day, animalType, animal_number]
+        );
+        if (!byNumber.length) {
+          return res.status(404).json({ message: "No matching line start found for this number" });
+        }
+        if (byNumber[0].recorded_end_time) {
+          return res.status(409).json({ message: "This record already has an end time recorded" });
+        }
+        targetRow = byNumber[0];
+      } else {
+        const [pending] = await db.execute(
+          `SELECT record_id, animal_number FROM line_records
+           WHERE group_id = ? AND day = ? AND animal_type = ? AND recorded_end_time IS NULL
+           ORDER BY recorded_time ASC, record_id ASC
+           LIMIT 1`,
+          [groupId, day, animalType]
+        );
+        if (!pending.length) {
+          return res.status(404).json({ message: "No pending line start for this type in this group" });
+        }
+        targetRow = pending[0];
+      }
+
+      const recorded_end_time = toMysqlDatetime(req.body?.recorded_end_time);
+
+      await db.execute(
+        `UPDATE line_records SET recorded_end_time = ? WHERE record_id = ?`,
+        [recorded_end_time, targetRow.record_id]
+      );
+
+      res.json({
+        record_id: targetRow.record_id,
+        group_id: groupId,
+        day,
+        animal_type: animalType,
+        animal_number: targetRow.animal_number,
+        recorded_end_time: formatRowTime(recorded_end_time),
+      });
+    } catch (error) {
+      logError("LINE", "Record end error", error);
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -393,6 +526,13 @@ export const registerLineRoutes = (app, db, verifyToken) => {
           ? toMysqlDatetime(req.body.recorded_time)
           : row.recorded_time;
 
+      const recorded_end_time =
+        req.body?.recorded_end_time !== undefined
+          ? req.body.recorded_end_time
+            ? toMysqlDatetime(req.body.recorded_end_time)
+            : null
+          : row.recorded_end_time;
+
       const groupId =
         req.body?.group_id !== undefined ? Number(req.body.group_id) : row.group_id;
       const day = req.body?.day !== undefined ? parseDay(req.body.day) : row.day;
@@ -410,9 +550,10 @@ export const registerLineRoutes = (app, db, verifyToken) => {
 
       await db.execute(
         `UPDATE line_records
-         SET group_id = ?, day = ?, animal_type = ?, animal_number = ?, recorded_time = ?
+         SET group_id = ?, day = ?, animal_type = ?, animal_number = ?,
+             recorded_time = ?, recorded_end_time = ?
          WHERE record_id = ?`,
-        [groupId, day, animalType, animal_number, recorded_time, recordId]
+        [groupId, day, animalType, animal_number, recorded_time, recorded_end_time, recordId]
       );
 
       res.json({
@@ -422,6 +563,7 @@ export const registerLineRoutes = (app, db, verifyToken) => {
         animal_type: animalType,
         animal_number,
         recorded_time: formatRowTime(recorded_time),
+        recorded_end_time: formatRowTime(recorded_end_time),
       });
     } catch (error) {
       logError("LINE", "Update record error", error);
@@ -498,7 +640,7 @@ export const registerLineRoutes = (app, db, verifyToken) => {
 
       const [rows] = await db.execute(
         `SELECT r.record_id, r.group_id, g.group_name, r.day, r.animal_type,
-                r.animal_number, r.recorded_time, r.created_at
+                r.animal_number, r.recorded_time, r.recorded_end_time, r.created_at
          FROM line_records r
          JOIN line_groups g ON g.group_id = r.group_id
          ${where}
@@ -511,6 +653,7 @@ export const registerLineRoutes = (app, db, verifyToken) => {
         data: rows.map((row) => ({
           ...row,
           recorded_time: formatRowTime(row.recorded_time),
+          recorded_end_time: formatRowTime(row.recorded_end_time),
           units: TYPE_MULTIPLIER[row.animal_type] || 1,
         })),
         total,

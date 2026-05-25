@@ -3,6 +3,29 @@ import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
 
 const ALLOWED_STATUSES = ["Pending", "Rider Assigned", "Dispatched", "Delivered", "Returned to Farm"];
+
+/** True when delivery_status is NULL, blank, or explicitly Pending. */
+function sqlIsPending(alias = "o") {
+  const col = `${alias}.delivery_status`;
+  return `(${col} IS NULL OR TRIM(COALESCE(${col}, '')) = '' OR ${col} = 'Pending')`;
+}
+
+/** WHERE fragment + params for filtering orders by delivery status(es). */
+function buildDeliveryStatusFilter(statuses, alias = "o") {
+  const parts = [];
+  const params = [];
+  for (const status of statuses) {
+    if (status === "Pending") {
+      parts.push(sqlIsPending(alias));
+    } else {
+      parts.push(`${alias}.delivery_status = ?`);
+      params.push(status);
+    }
+  }
+  if (!parts.length) return { sql: "1=1", params: [] };
+  return { sql: `(${parts.join(" OR ")})`, params };
+}
+
 const REGENERATE_ALLOWED_EMAIL = "hanzalamawahab@gmail.com";
 const OPERATIONS_YEAR = 2026;
 const ALLOWED_ORDER_TYPE_SQL =
@@ -805,10 +828,15 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         if (!Number.isFinite(batchId) || batchId <= 0) {
           return res.status(400).json({ message: "Invalid batch_id" });
         }
-        const [batchRows] = await db.execute(
-          `SELECT challan_id FROM challan WHERE batch_id = ? AND COALESCE(total_hissa, 0) > 0 ORDER BY day, slot, challan_id`,
-          [batchId]
-        );
+        const dayFilter = normalizeDayLabel(req.body.day || "");
+        let idSql = `SELECT challan_id FROM challan WHERE batch_id = ? AND COALESCE(total_hissa, 0) > 0`;
+        const idParams = [batchId];
+        if (dayFilter && ALLOWED_OPERATION_DAYS.includes(dayFilter)) {
+          idSql += ` AND TRIM(COALESCE(day, '')) = ?`;
+          idParams.push(dayFilter);
+        }
+        idSql += ` ORDER BY slot, area, challan_id`;
+        const [batchRows] = await db.execute(idSql, idParams);
         ids = batchRows.map((r) => r.challan_id);
       } else {
         return res.status(400).json({ message: "challan_ids array or batch_id required" });
@@ -834,6 +862,7 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
             o.contact,
             o.alt_contact,
             o.order_type,
+            o.day,
             o.cow_number,
             o.hissa_number,
             o.slot,
@@ -1224,7 +1253,7 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         `SELECT COUNT(*) AS total_hissas,
                 SUM(o.delivery_status = 'Delivered') AS delivered,
                 SUM(o.delivery_status = 'Dispatched') AS in_transit,
-                SUM(o.delivery_status = 'Pending') AS pending,
+                SUM(${sqlIsPending("o")}) AS pending,
                 SUM(o.delivery_status = 'Returned to Farm') AS returned,
                 SUM(o.delivery_status = 'Rider Assigned') AS rider_assigned,
                 SUM(o.rider_id IS NULL) AS unassigned
@@ -1237,7 +1266,7 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       const [areas] = await db.execute(
         `SELECT COALESCE(NULLIF(TRIM(o.area), ''), 'Unknown') AS area,
                 COUNT(*) AS total, SUM(o.delivery_status = 'Delivered') AS delivered,
-                SUM(o.delivery_status = 'Pending') AS pending,
+                SUM(${sqlIsPending("o")}) AS pending,
                 SUM(o.delivery_status = 'Dispatched') AS in_transit,
                 SUM(o.delivery_status = 'Returned to Farm') AS returned
          FROM orders o ${where} GROUP BY area ORDER BY area`,
@@ -1248,7 +1277,7 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         `SELECT r.rider_id, r.rider_name,
                 COALESCE(NULLIF(TRIM(r.availability), ''), 'Available') AS availability,
                 SUM(o.delivery_status = 'Delivered') AS delivered,
-                SUM(o.delivery_status IN ('Pending', 'Rider Assigned', 'Dispatched')) AS pending
+                SUM(${sqlIsPending("o")} OR o.delivery_status IN ('Rider Assigned', 'Dispatched')) AS pending
          FROM riders r
          LEFT JOIN orders o ON o.rider_id = r.rider_id ${riderWhere}
          WHERE r.status = 'active' OR r.status IS NULL
@@ -1275,43 +1304,128 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
         [OPERATIONS_YEAR]
       );
 
+      const SLAUGHTER_TYPE_LABELS = {
+        premium_cow: "Premium Cow",
+        standard_cow: "Standard Cow",
+        waqf_cow: "Waqf Cow",
+        exclusive_cow: "Exclusive Cow",
+        premium_goat: "Premium Goat",
+        super_goat: "Super Goat",
+        exclusive_goat: "Exclusive Goat",
+      };
+      const COW_TYPES = ["premium_cow", "standard_cow", "waqf_cow", "exclusive_cow"];
+      const GOAT_TYPES = ["premium_goat", "super_goat", "exclusive_goat"];
+
       const slaughterDay = dayLabelToNumber(day);
-      let slaughter = { cows_slaughtered: 0, goats_slaughtered: 0 };
+      let slaughter = {
+        cows_slaughtered: { start: 0, end: 0, pending: 0 },
+        goats_slaughtered: { start: 0, end: 0, pending: 0 },
+        by_type: [],
+      };
       if (slaughterDay) {
-        const [[slRow]] = await db.execute(
-          `SELECT
-             SUM(animal_type IN ('premium_cow','standard_cow','waqf_cow','exclusive_cow')) AS cows_slaughtered,
-             SUM(animal_type IN ('premium_goat','super_goat')) AS goats_slaughtered
-           FROM slaughter_records WHERE day = ?`,
+        const [slRows] = await db.execute(
+          `SELECT animal_type,
+                  COUNT(*) AS start_cnt,
+                  SUM(slaughter_end_time IS NOT NULL) AS end_cnt
+           FROM slaughter_records WHERE day = ?
+           GROUP BY animal_type`,
           [slaughterDay]
         );
-        slaughter = {
-          cows_slaughtered: Number(slRow?.cows_slaughtered || 0),
-          goats_slaughtered: Number(slRow?.goats_slaughtered || 0),
-        };
+        const slMap = {};
+        for (const row of slRows || []) {
+          slMap[row.animal_type] = {
+            start: Number(row.start_cnt) || 0,
+            end: Number(row.end_cnt) || 0,
+          };
+        }
+        slaughter.by_type = Object.keys(SLAUGHTER_TYPE_LABELS).map((key) => {
+          const start = slMap[key]?.start || 0;
+          const end = slMap[key]?.end || 0;
+          return {
+            key,
+            label: SLAUGHTER_TYPE_LABELS[key],
+            start,
+            end,
+            pending: Math.max(0, start - end),
+          };
+        });
+        for (const key of COW_TYPES) {
+          slaughter.cows_slaughtered.start += slMap[key]?.start || 0;
+          slaughter.cows_slaughtered.end += slMap[key]?.end || 0;
+        }
+        slaughter.cows_slaughtered.pending = Math.max(
+          0,
+          slaughter.cows_slaughtered.start - slaughter.cows_slaughtered.end
+        );
+        for (const key of GOAT_TYPES) {
+          slaughter.goats_slaughtered.start += slMap[key]?.start || 0;
+          slaughter.goats_slaughtered.end += slMap[key]?.end || 0;
+        }
+        slaughter.goats_slaughtered.pending = Math.max(
+          0,
+          slaughter.goats_slaughtered.start - slaughter.goats_slaughtered.end
+        );
       }
 
-      let packing = { hissa_packed: 0, goats_packed: 0 };
+      let packing = {
+        hissa_packed: { start: 0, end: 0, pending: 0 },
+        goats_packed: { start: 0, end: 0, pending: 0 },
+        by_type: [],
+      };
       if (slaughterDay) {
         const [packRows] = await db.execute(
-          `SELECT animal_type, COUNT(*) AS cnt FROM line_records WHERE day = ? GROUP BY animal_type`,
+          `SELECT animal_type,
+                  COUNT(*) AS start_cnt,
+                  SUM(recorded_end_time IS NOT NULL) AS end_cnt
+           FROM line_records WHERE day = ?
+           GROUP BY animal_type`,
           [slaughterDay]
         );
+        const packMap = {};
         for (const row of packRows || []) {
-          const cnt = Number(row.cnt || 0);
-          if (["premium_cow", "standard_cow", "waqf_cow", "exclusive_cow"].includes(row.animal_type)) {
-            packing.hissa_packed += cnt * LINE_COW_MULTIPLIER;
-          } else if (["premium_goat", "super_goat"].includes(row.animal_type)) {
-            packing.goats_packed += cnt;
-          }
+          packMap[row.animal_type] = {
+            start: Number(row.start_cnt) || 0,
+            end: Number(row.end_cnt) || 0,
+          };
         }
+        packing.by_type = Object.keys(SLAUGHTER_TYPE_LABELS).map((key) => {
+          const rawStart = packMap[key]?.start || 0;
+          const rawEnd = packMap[key]?.end || 0;
+          const mult = COW_TYPES.includes(key) ? LINE_COW_MULTIPLIER : 1;
+          const start = rawStart * mult;
+          const end = rawEnd * mult;
+          return {
+            key,
+            label: SLAUGHTER_TYPE_LABELS[key],
+            start,
+            end,
+            pending: Math.max(0, start - end),
+          };
+        });
+        for (const key of COW_TYPES) {
+          const mult = LINE_COW_MULTIPLIER;
+          packing.hissa_packed.start += (packMap[key]?.start || 0) * mult;
+          packing.hissa_packed.end += (packMap[key]?.end || 0) * mult;
+        }
+        packing.hissa_packed.pending = Math.max(
+          0,
+          packing.hissa_packed.start - packing.hissa_packed.end
+        );
+        for (const key of GOAT_TYPES) {
+          packing.goats_packed.start += packMap[key]?.start || 0;
+          packing.goats_packed.end += packMap[key]?.end || 0;
+        }
+        packing.goats_packed.pending = Math.max(
+          0,
+          packing.goats_packed.start - packing.goats_packed.end
+        );
       }
 
       const [deliveriesBySlot] = await db.execute(
         `SELECT COALESCE(NULLIF(TRIM(o.slot), ''), 'Unassigned') AS slot,
                 COUNT(*) AS total,
                 SUM(o.delivery_status = 'Delivered') AS delivered,
-                SUM(o.delivery_status = 'Pending') AS pending,
+                SUM(${sqlIsPending("o")}) AS pending,
                 SUM(o.delivery_status = 'Dispatched') AS in_transit,
                 SUM(o.delivery_status = 'Returned to Farm') AS returned,
                 SUM(o.delivery_status = 'Rider Assigned') AS rider_assigned
@@ -1322,8 +1436,9 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
 
       const targetConditions = [...baseConditions];
       const targetParams = [...baseParams];
-      targetConditions.push(`o.delivery_status IN (${statusFilter.map(() => "?").join(", ")})`);
-      targetParams.push(...statusFilter);
+      const statusFilterSql = buildDeliveryStatusFilter(statusFilter, "o");
+      targetConditions.push(statusFilterSql.sql);
+      targetParams.push(...statusFilterSql.params);
       const targetWhere = targetConditions.length ? `WHERE ${targetConditions.join(" AND ")}` : "";
       const [targetRows] = await db.execute(
         `SELECT ${OPS_TYPE_KEY_SQL} AS typeKey, COUNT(*) AS cnt

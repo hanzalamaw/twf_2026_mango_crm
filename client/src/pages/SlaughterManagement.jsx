@@ -9,19 +9,19 @@ const COLUMNS = [
   { key: 'group_name', label: 'Qassai Group' },
   { key: 'animal_type', label: 'Type' },
   { key: 'animal_number', label: 'Number' },
-  { key: 'slaughter_time', label: 'Time' },
+  { key: 'slaughter_time', label: 'Start' },
+  { key: 'slaughter_end_time', label: 'End' },
 ];
 
 const PAGE_SIZE = 50;
 
-function formatTime(val) {
+function formatTime12Hour(val) {
   if (val == null || val === '') return '—';
   const s = String(val);
-  if (s.includes('T')) {
-    const [d, t] = s.split('T');
-    return `${d} ${(t || '').slice(0, 5)}`;
-  }
-  return s;
+  const iso = s.includes('T') ? s : s.replace(' ', 'T');
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function SearchIcon() {
@@ -138,7 +138,8 @@ export default function SlaughterManagement() {
       r.group_name,
       animalTypeLabel(r.animal_type),
       r.animal_number,
-      formatTime(r.slaughter_time),
+      formatTime12Hour(r.slaughter_time),
+      formatTime12Hour(r.slaughter_end_time),
     ]);
     const ws = XLSX.utils.aoa_to_sheet([header, ...body]);
     const wb = XLSX.utils.book_new();
@@ -149,7 +150,8 @@ export default function SlaughterManagement() {
   const cellValue = (r, key) => {
     if (key === 'day') return dayLabel(r.day);
     if (key === 'animal_type') return animalTypeLabel(r.animal_type);
-    if (key === 'slaughter_time') return formatTime(r.slaughter_time);
+    if (key === 'slaughter_time') return formatTime12Hour(r.slaughter_time);
+    if (key === 'slaughter_end_time') return formatTime12Hour(r.slaughter_end_time);
     return r[key] ?? '—';
   };
 

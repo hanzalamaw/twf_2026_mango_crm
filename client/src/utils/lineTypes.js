@@ -14,6 +14,7 @@ export const LINE_COW_TYPES = [
 export const LINE_GOAT_TYPES = [
   { key: 'premium_goat', label: 'Premium Goat', multiplier: 1 },
   { key: 'super_goat', label: 'Super Goat', multiplier: 1 },
+  { key: 'exclusive_goat', label: 'Exclusive Goat', multiplier: 1 },
 ];
 
 export const LINE_ANIMAL_TYPES = [...LINE_COW_TYPES, ...LINE_GOAT_TYPES];
@@ -30,14 +31,35 @@ export function weightedCount(rawCount, typeKey) {
   return (Number(rawCount) || 0) * animalTypeMultiplier(typeKey);
 }
 
-/** Sum weighted card values for cow types (premium, standard, waqf, exclusive). */
-export function sumCowStats(stats = {}) {
-  return LINE_COW_TYPES.reduce((sum, t) => sum + (Number(stats[t.key]) || 0), 0);
+function statVal(entry) {
+  if (entry == null) return { start: 0, end: 0 };
+  if (typeof entry === 'object') {
+    return { start: Number(entry.start) || 0, end: Number(entry.end) || 0 };
+  }
+  const n = Number(entry) || 0;
+  return { start: n, end: n };
 }
 
-/** Sum weighted card values for goat types (premium, super). */
+/** Sum weighted card values for cow types (premium, standard, waqf, exclusive). */
+export function sumCowStats(stats = {}) {
+  return LINE_COW_TYPES.reduce(
+    (acc, t) => {
+      const v = statVal(stats[t.key]);
+      return { start: acc.start + v.start, end: acc.end + v.end };
+    },
+    { start: 0, end: 0 }
+  );
+}
+
+/** Sum weighted card values for goat types (premium, super, exclusive). */
 export function sumGoatStats(stats = {}) {
-  return LINE_GOAT_TYPES.reduce((sum, t) => sum + (Number(stats[t.key]) || 0), 0);
+  return LINE_GOAT_TYPES.reduce(
+    (acc, t) => {
+      const v = statVal(stats[t.key]);
+      return { start: acc.start + v.start, end: acc.end + v.end };
+    },
+    { start: 0, end: 0 }
+  );
 }
 
 export function dayLabel(day) {
