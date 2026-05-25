@@ -20,14 +20,13 @@ import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
   ALLOWED_ORDER_TYPES,
-  GOAT_HISSA_EXCLUSIVE,
-  GOAT_HISSA_PREMIUM,
-  GOAT_HISSA_SUPER,
   ORDER_TYPE_FILTERS,
   challanMatchesOrderTypeFilter,
   computeModalTotals,
   formatTotalHissa,
   normalizeOrderType,
+  isGoatHissaOrderType,
+  partitionOrdersForChallanPrint,
   HISSA_COUNT_TABLE_HEADERS,
   getTableHissaCounts,
   hissaCountCellValues,
@@ -84,11 +83,6 @@ function formatAddress(value) {
 function short(v, n = 64) {
   const s = String(v ?? '');
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
-}
-
-function isGoatHissaOrderType(value) {
-  const t = normalizeOrderType(value);
-  return t === GOAT_HISSA_SUPER || t === GOAT_HISSA_PREMIUM || t === GOAT_HISSA_EXCLUSIVE;
 }
 
 /** Header badge — solid black pill, white text (B&W print; same for Affluent & Special Request). */
@@ -354,98 +348,26 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
 }
 
 /* ─────────────────────────────────────────────
-   generatePdf  –  exact challan design
+   renderChallanPagesForOrders — challan list page(s) for one order-type section
    ───────────────────────────────────────────── */
-async function generatePdf(items, options = {}) {
-  const { includeSlotDividers = false } = options;
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-  
-    const PW = 595.28;
-    const PH = 841.89;
-    const ML = 36;
-    const MR = PW - 36;
-    const CONTENT_W = MR - ML;
-  
-    const safe = (v, fallback = '') => {
-      const s = String(v ?? '').trim();
-      return s || fallback;
-    };
-  
-    const split = (text, maxWidth) => {
-      return doc.splitTextToSize(safe(text), maxWidth);
-    };
-  
-    const drawWrappedLabelValue = (label, value, x, y, valueMaxWidth, lineHeight = 12) => {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(20, 20, 20);
-      doc.text(`${label}:`, x, y);
-  
-      const labelW = doc.getTextWidth(`${label}: `);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(35, 35, 35);
-  
-      const lines = split(value, valueMaxWidth - labelW - 4);
-      doc.text(lines, x + labelW + 2, y);
-  
-      return Math.max(lineHeight, lines.length * lineHeight);
-    };
-  
-    const drawLineValue = (label, value, x, y, lineEndX) => {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(10);
-      doc.setTextColor(20, 20, 20);
-      doc.text(`${label}:`, x, y);
-  
-      const labelW = doc.getTextWidth(`${label}: `);
-      const valueX = x + labelW + 6;
-  
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(35, 35, 35);
-  
-      const valueLines = split(value || '', lineEndX - valueX - 4).slice(0, 1);
-      if (valueLines.length) doc.text(valueLines, valueX, y);
-  
-      doc.setDrawColor(30, 30, 30);
-      doc.setLineWidth(0.8);
-      doc.line(valueX, y + 4, lineEndX, y + 4);
-    };
-  
-    const sortedItems = sortPrintItems(items);
-    let firstPage = true;
-    const nextPage = () => {
-      if (!firstPage) doc.addPage();
-      firstPage = false;
-    };
-    let lastSlotKey = null;
-    const layout = { PW, PH, ML, MR, CONTENT_W };
-    const pdfHelpers = { safe, split, getChallanCustomerFields };
+async function renderChallanPagesForOrders(doc, ctx, item, orders) {
+  const { PW, PH, ML, MR, CONTENT_W, safe, split, drawLineValue, nextPage } = ctx;
+  const c = item.challan || {};
+  const orderList = Array.isArray(orders) ? orders : [];
 
-    for (const item of sortedItems) {
-      const c = item.challan || {};
-      const orders = Array.isArray(item.orders) ? item.orders : [];
+  const modalPdfTotals = computeModalTotals(c, orderList);
+  const totalHissaText = formatTotalHissa(modalPdfTotals.total, modalPdfTotals);
+  const tagSource = { ...c, orders: orderList, description: getDescriptionText({ ...c, orders: orderList }) };
+  const challanTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
 
-      const primarySlot = getPrimarySlot(c.slot);
-      const slotKey = `${slotSortKey(primarySlot)}|${primarySlot}`;
-      if (includeSlotDividers && slotKey !== lastSlotKey) {
-        nextPage();
-        drawSlotDividerPage(doc, primarySlot, PW, PH);
-        lastSlotKey = slotKey;
-      }
+  const { customerId, customerName, contact } = getChallanCustomerFields(c, orderList, safe);
 
-      const modalPdfTotals = computeModalTotals(c, orders);
-      const totalHissaText = formatTotalHissa(modalPdfTotals.total, modalPdfTotals);
-      const tagSource = { ...c, orders, description: getDescriptionText({ ...c, orders }) };
-      const challanTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
+  let pageNo = 0;
+  let orderIndex = 0;
 
-      const { customerId, customerName, contact } = getChallanCustomerFields(c, orders, safe);
-
-      let pageNo = 0;
-      let orderIndex = 0;
-
-      while (orderIndex < Math.max(orders.length, 1)) {
-        nextPage();
-        pageNo++;
+  while (orderIndex < Math.max(orderList.length, 1)) {
+    nextPage();
+    pageNo++;
   
         // Header — tag badge to the right of title (B&W: solid black pill for both tags)
         const titleText = `CHALLAN # ${safe(c.challan_id, '')}`;
@@ -622,7 +544,7 @@ async function generatePdf(items, options = {}) {
           return Math.max(minRowH, leftH + 10, rightH + 10);
         };
   
-        if (!orders.length) {
+        if (!orderList.length) {
           doc.setFillColor(247, 248, 250);
           doc.roundedRect(ML, y, CONTENT_W, minRowH, 4, 4, 'F');
           doc.setFont('helvetica', 'normal');
@@ -631,8 +553,8 @@ async function generatePdf(items, options = {}) {
           doc.text('No orders linked to this challan.', ML + CONTENT_W / 2, y + 28, { align: 'center' });
           orderIndex = 1;
         } else {
-          while (orderIndex < orders.length) {
-            const o = orders[orderIndex];
+          while (orderIndex < orderList.length) {
+            const o = orderList[orderIndex];
             const rowH = measureOrderRow(o);
             if (y + rowH > maxY) break;
   
@@ -691,7 +613,7 @@ async function generatePdf(items, options = {}) {
         }
   
         // Approval/signature ONLY after all rows printed
-        if (orderIndex >= Math.max(orders.length, 1)) {
+        if (orderIndex >= Math.max(orderList.length, 1)) {
           const footerY = PH - 48;
   
           doc.setFont('helvetica', 'bold');
@@ -711,16 +633,94 @@ async function generatePdf(items, options = {}) {
         doc.setFontSize(7.5);
         doc.setTextColor(160, 160, 160);
         doc.text(`Page ${pageNo}`, MR, PH - 20, { align: 'right' });
-      }
+  }
+}
 
-      for (const o of orders) {
+/* ─────────────────────────────────────────────
+   generatePdf  –  cow section, then goat section per challan
+   ───────────────────────────────────────────── */
+async function generatePdf(items, options = {}) {
+  const { includeSlotDividers = false } = options;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+
+  const PW = 595.28;
+  const PH = 841.89;
+  const ML = 36;
+  const MR = PW - 36;
+  const CONTENT_W = MR - ML;
+
+  const safe = (v, fallback = '') => {
+    const s = String(v ?? '').trim();
+    return s || fallback;
+  };
+
+  const split = (text, maxWidth) => doc.splitTextToSize(safe(text), maxWidth);
+
+  const drawLineValue = (label, value, x, y, lineEndX) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(20, 20, 20);
+    doc.text(`${label}:`, x, y);
+
+    const labelW = doc.getTextWidth(`${label}: `);
+    const valueX = x + labelW + 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(35, 35, 35);
+
+    const valueLines = split(value || '', lineEndX - valueX - 4).slice(0, 1);
+    if (valueLines.length) doc.text(valueLines, valueX, y);
+
+    doc.setDrawColor(30, 30, 30);
+    doc.setLineWidth(0.8);
+    doc.line(valueX, y + 4, lineEndX, y + 4);
+  };
+
+  const sortedItems = sortPrintItems(items);
+  let firstPage = true;
+  const nextPage = () => {
+    if (!firstPage) doc.addPage();
+    firstPage = false;
+  };
+  let lastSlotKey = null;
+  const layout = { PW, PH, ML, MR, CONTENT_W };
+  const pdfHelpers = { safe, split, getChallanCustomerFields };
+  const ctx = { PW, PH, ML, MR, CONTENT_W, safe, split, drawLineValue, nextPage };
+
+  for (const item of sortedItems) {
+    const c = item.challan || {};
+    const allOrders = Array.isArray(item.orders) ? item.orders : [];
+
+    const primarySlot = getPrimarySlot(c.slot);
+    const slotKey = `${slotSortKey(primarySlot)}|${primarySlot}`;
+    if (includeSlotDividers && slotKey !== lastSlotKey) {
+      nextPage();
+      drawSlotDividerPage(doc, primarySlot, PW, PH);
+      lastSlotKey = slotKey;
+    }
+
+    const { cow, goat, other } = partitionOrdersForChallanPrint(allOrders);
+    const sections = [
+      { orders: cow },
+      { orders: goat },
+      { orders: other },
+    ].filter((s) => s.orders.length > 0);
+
+    const printSections = sections.length
+      ? sections
+      : [{ orders: [] }];
+
+    for (const { orders: sectionOrders } of printSections) {
+      await renderChallanPagesForOrders(doc, ctx, item, sectionOrders);
+      for (const o of sectionOrders) {
         nextPage();
         drawOrderStickerPage(doc, layout, item, o, pdfHelpers);
       }
     }
-
-    doc.save(`challan-${new Date().toISOString().slice(0, 10)}.pdf`);
   }
+
+  doc.save(`challan-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
 
 const inputStyle = { width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px', background: '#fff' };
 

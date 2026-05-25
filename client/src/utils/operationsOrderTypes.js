@@ -4,15 +4,44 @@ export const GOAT_HISSA_SUPER = 'Super Goat(Hissa)';
 export const GOAT_HISSA_PREMIUM = 'Premium Goat(Hissa)';
 export const GOAT_HISSA_EXCLUSIVE = 'Exclusive Goat(Hissa)';
 
-export const ALLOWED_ORDER_TYPES = [
+export const COW_HISSA_ORDER_TYPES = [
   'Hissa - Standard',
   'Hissa Premium',
   'Hissa - Waqf',
   'Hissa - Exclusive',
+];
+
+export const GOAT_HISSA_ORDER_TYPES = [
   GOAT_HISSA_SUPER,
   GOAT_HISSA_PREMIUM,
   GOAT_HISSA_EXCLUSIVE,
 ];
+
+export const ALLOWED_ORDER_TYPES = [
+  ...COW_HISSA_ORDER_TYPES,
+  ...GOAT_HISSA_ORDER_TYPES,
+];
+
+export function isCowHissaOrderType(value) {
+  return COW_HISSA_ORDER_TYPES.includes(normalizeOrderType(value));
+}
+
+export function isGoatHissaOrderType(value) {
+  return GOAT_HISSA_ORDER_TYPES.includes(normalizeOrderType(value));
+}
+
+/** Split challan orders into cow, goat, and any other rows for separate PDF sections. */
+export function partitionOrdersForChallanPrint(orders) {
+  const cow = [];
+  const goat = [];
+  const other = [];
+  for (const o of orders || []) {
+    if (isCowHissaOrderType(o.order_type)) cow.push(o);
+    else if (isGoatHissaOrderType(o.order_type)) goat.push(o);
+    else other.push(o);
+  }
+  return { cow, goat, other };
+}
 
 export const ORDER_TYPE_FILTERS = [
   { value: 'Hissa - Standard', label: 'Hissa Standard' },
