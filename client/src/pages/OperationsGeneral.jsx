@@ -5,6 +5,7 @@ function joinFilterKey(values) {
 }
 import { API_BASE } from '../config/api';
 import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
+import { useDashboardSlaughterPackingSocket } from '../utils/useDashboardSlaughterPackingSocket';
 import { useAuth } from '../context/AuthContext';
 import OperationsTargetSection from '../components/OperationsTargetSection';
 import { ORDER_TYPE_FILTERS } from '../utils/operationsOrderTypes';
@@ -325,11 +326,32 @@ export default function OperationsDashboard() {
     }
   }, [authFetch, dayFilter, filterAreasKey, filterOrderTypesKey, filterSlotsKey, filterStatusesKey]);
 
+  const loadSlaughterPacking = useCallback(async () => {
+    try {
+      const qs = new URLSearchParams();
+      if (dayFilter) qs.set('day', dayFilter);
+      const res = await authFetch(
+        `${API_BASE}/operations/dashboard/slaughter-packing${qs.toString() ? `?${qs}` : ''}`
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      setStats((prev) => (prev
+        ? { ...prev, slaughter: data.slaughter, packing: data.packing }
+        : prev));
+    } catch {
+      /* keep existing card values on refresh failure */
+    }
+  }, [authFetch, dayFilter]);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  useOperationsSocketRefresh(() => {
+  useDashboardSlaughterPackingSocket(loadSlaughterPacking, dayFilter);
+
+  useOperationsSocketRefresh((payload) => {
+    const ev = payload?.event;
+    if (ev === 'slaughter:changed' || ev === 'line:changed') return;
     if (document.visibilityState === 'visible') load();
   }, []);
 

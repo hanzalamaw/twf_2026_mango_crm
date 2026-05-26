@@ -1,4 +1,10 @@
 import { logError } from "../utils/logger.js";
+import { emitOperationsChanged } from "../utils/operationsSocket.js";
+
+function notifySlaughterChanged(io, action, day) {
+  if (!day) return;
+  emitOperationsChanged(io, "slaughter:changed", { action, day });
+}
 
 const VALID_TYPES = new Set([
   "premium_cow",
@@ -229,7 +235,7 @@ function formatRowTime(val) {
  * @param {import("mysql2/promise").Pool} db
  * @param {Function} verifyToken
  */
-export const registerSlaughterRoutes = (app, db, verifyToken) => {
+export const registerSlaughterRoutes = (app, db, verifyToken, io = null) => {
   ensureSlaughterTables(db).catch((e) => logError("SLAUGHTER", "Ensure tables failed", e));
 
   app.get("/api/operations/slaughter/dashboard", verifyToken, async (req, res) => {
@@ -433,6 +439,8 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
         [slaughter_end_time, targetRow.slaughter_id]
       );
 
+      notifySlaughterChanged(io, "end", day);
+
       res.json({
         slaughter_id: targetRow.slaughter_id,
         group_id: groupId,
@@ -476,6 +484,8 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
          VALUES (?, ?, ?, ?, ?)`,
         [groupId, day, animalType, animal_number, slaughter_time]
       );
+
+      notifySlaughterChanged(io, "created", day);
 
       res.status(201).json({
         slaughter_id: result.insertId,
@@ -544,6 +554,9 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
         [groupId, day, animalType, animal_number, slaughter_time, slaughter_end_time, slaughterId]
       );
 
+      notifySlaughterChanged(io, "updated", day);
+      if (row.day !== day) notifySlaughterChanged(io, "updated", row.day);
+
       res.json({
         slaughter_id: slaughterId,
         group_id: groupId,
@@ -565,11 +578,20 @@ export const registerSlaughterRoutes = (app, db, verifyToken) => {
       const slaughterId = Number(req.params.id);
       if (!Number.isFinite(slaughterId)) return res.status(400).json({ message: "Invalid slaughter id" });
 
+      const [existing] = await db.execute(
+        `SELECT day FROM slaughter_records WHERE slaughter_id = ?`,
+        [slaughterId]
+      );
+      if (!existing.length) return res.status(404).json({ message: "Slaughter not found" });
+
       const [result] = await db.execute(
         `DELETE FROM slaughter_records WHERE slaughter_id = ?`,
         [slaughterId]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: "Slaughter not found" });
+
+      notifySlaughterChanged(io, "deleted", existing[0].day);
+
       res.json({ message: "Deleted" });
     } catch (error) {
       logError("SLAUGHTER", "Delete slaughter error", error);

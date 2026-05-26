@@ -1,4 +1,10 @@
 import { logError } from "../utils/logger.js";
+import { emitOperationsChanged } from "../utils/operationsSocket.js";
+
+function notifyLineChanged(io, action, day) {
+  if (!day) return;
+  emitOperationsChanged(io, "line:changed", { action, day });
+}
 
 const VALID_TYPES = new Set([
   "premium_cow",
@@ -241,7 +247,7 @@ function formatRowTime(val) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export const registerLineRoutes = (app, db, verifyToken) => {
+export const registerLineRoutes = (app, db, verifyToken, io = null) => {
   ensureLineTables(db).catch((e) => logError("LINE", "Ensure tables failed", e));
 
   app.get("/api/operations/line/dashboard", verifyToken, async (req, res) => {
@@ -445,6 +451,8 @@ export const registerLineRoutes = (app, db, verifyToken) => {
         [recorded_end_time, targetRow.record_id]
       );
 
+      notifyLineChanged(io, "end", day);
+
       res.json({
         record_id: targetRow.record_id,
         group_id: groupId,
@@ -488,6 +496,8 @@ export const registerLineRoutes = (app, db, verifyToken) => {
          VALUES (?, ?, ?, ?, ?)`,
         [groupId, day, animalType, animal_number, recorded_time]
       );
+
+      notifyLineChanged(io, "created", day);
 
       res.status(201).json({
         record_id: result.insertId,
@@ -556,6 +566,9 @@ export const registerLineRoutes = (app, db, verifyToken) => {
         [groupId, day, animalType, animal_number, recorded_time, recorded_end_time, recordId]
       );
 
+      notifyLineChanged(io, "updated", day);
+      if (row.day !== day) notifyLineChanged(io, "updated", row.day);
+
       res.json({
         record_id: recordId,
         group_id: groupId,
@@ -577,11 +590,20 @@ export const registerLineRoutes = (app, db, verifyToken) => {
       const recordId = Number(req.params.id);
       if (!Number.isFinite(recordId)) return res.status(400).json({ message: "Invalid record id" });
 
+      const [existing] = await db.execute(
+        `SELECT day FROM line_records WHERE record_id = ?`,
+        [recordId]
+      );
+      if (!existing.length) return res.status(404).json({ message: "Record not found" });
+
       const [result] = await db.execute(
         `DELETE FROM line_records WHERE record_id = ?`,
         [recordId]
       );
       if (result.affectedRows === 0) return res.status(404).json({ message: "Record not found" });
+
+      notifyLineChanged(io, "deleted", existing[0].day);
+
       res.json({ message: "Deleted" });
     } catch (error) {
       logError("LINE", "Delete record error", error);

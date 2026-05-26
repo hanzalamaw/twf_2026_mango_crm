@@ -428,8 +428,8 @@ const startServer = async () => {
     registerAccountingRoutes(app, db, verifyToken);
     registerOperationsRoutes(app, db, verifyToken, io);
     registerRiderAttendanceRoutes(app, db, verifyToken);
-    registerSlaughterRoutes(app, db, verifyToken);
-    registerLineRoutes(app, db, verifyToken);
+    registerSlaughterRoutes(app, db, verifyToken, io);
+    registerLineRoutes(app, db, verifyToken, io);
 
     // ---------- 404 ----------
     app.use((req, res) => {
