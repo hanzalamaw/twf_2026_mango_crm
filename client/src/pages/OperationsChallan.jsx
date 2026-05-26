@@ -1208,28 +1208,24 @@ export default function OperationsChallan() {
   };
 
   const onPrintPdf = async () => {
-    const printAll = selectedIds.size === 0;
-    const printDay = filterDay || selectedDay;
     if (!selectedBatch) return alert('Select a batch first.');
-    if (printAll) {
-      const dayCount = challans.filter(
-        (c) => normalizeForCompare(c.day) === normalizeForCompare(printDay)
-      ).length;
-      if (!dayCount) return alert(`No challans for ${printDay} in this batch.`);
-    } else {
-      const selectedRows = challans.filter((c) => selectedIds.has(c.challan_id));
-      if (!selectedRows.length) return alert('Select at least one challan to print, or clear selection to print all for the day.');
+    const printAll = selectedIds.size === 0;
+    const rowsToPrint = printAll
+      ? displayRows
+      : displayRows.filter((c) => selectedIds.has(c.challan_id));
+    if (!rowsToPrint.length) {
+      return alert(
+        printAll
+          ? 'No challans match the current batch, day, and filters.'
+          : 'Select at least one visible challan to print, or clear selection to print all filtered challans.'
+      );
     }
     setBusy(true); setErr('');
     try {
-      const body = printAll
-        ? { batch_id: selectedBatch, day: printDay }
-        : {
-            batch_id: selectedBatch,
-            challan_ids: sortChallanRowsForPrint(challans.filter((c) => selectedIds.has(c.challan_id))).map(
-              (c) => c.challan_id
-            ),
-          };
+      const body = {
+        batch_id: selectedBatch,
+        challan_ids: sortChallanRowsForPrint(rowsToPrint).map((c) => c.challan_id),
+      };
       const res = await authFetch(`${API_BASE}/operations/challans/bulk-detail`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1333,7 +1329,7 @@ export default function OperationsChallan() {
           <MultiSelectDropdown label="Order Type" options={ORDER_TYPE_FILTERS} values={filterOrderType} onChange={setFilterOrderType} placeholder="All types" width={160} />
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button type="button" disabled={busy} onClick={onPrintPdf}
-              title={selectedIds.size ? `Print ${selectedIds.size} selected challan(s)` : `Print all challans for ${filterDay || selectedDay} in this batch (sorted by slot, then area)`}
+              title={selectedIds.size ? `Print ${selectedIds.size} selected challan(s)` : `Print all ${displayRows.length} challan(s) matching current batch, day, and filters`}
               style={{ padding: '6px 13px', height: '29px', background: '#FF5722', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>
               Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}
             </button>
@@ -1354,7 +1350,7 @@ export default function OperationsChallan() {
         <div className="om-filter-toggle" style={{ display: 'none', gap: '8px', marginBottom: '8px', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: '1 1 120px', minWidth: 0, padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }} />
           <button type="button" className={`ops-filter-toggle-btn${mobileFiltersOpen ? ' is-open' : ''}`} onClick={() => setMobileFiltersOpen((v) => !v)}>⚙ Filters</button>
-          <button type="button" disabled={busy} onClick={onPrintPdf} title={selectedIds.size ? `Print ${selectedIds.size} selected` : `Print all for ${filterDay || selectedDay}`} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
+          <button type="button" disabled={busy} onClick={onPrintPdf} title={selectedIds.size ? `Print ${selectedIds.size} selected` : `Print all ${displayRows.length} filtered challan(s)`} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
         </div>
         <div className="om-challan-mobile-actions" style={{ display: 'none' }}>
           <button type="button" onClick={load} style={{ background: '#fff', color: '#555', border: '1px solid #e0e0e0' }}>Refresh</button>

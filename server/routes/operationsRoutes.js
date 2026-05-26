@@ -834,14 +834,22 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       const flags = await assertSub(req, res, (f) => f.operation_challan_management);
       if (!flags) return;
       const raw = req.body.challan_ids;
+      const batchId = req.body.batch_id ? Number(req.body.batch_id) : null;
+      const batchIdValid = Number.isFinite(batchId) && batchId > 0;
       let ids = [];
       if (Array.isArray(raw) && raw.length > 0) {
         ids = [...new Set(raw.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0))];
-      } else if (req.body.batch_id) {
-        const batchId = Number(req.body.batch_id);
-        if (!Number.isFinite(batchId) || batchId <= 0) {
-          return res.status(400).json({ message: "Invalid batch_id" });
+        if (batchIdValid) {
+          const ph = ids.map(() => "?").join(",");
+          const [scoped] = await db.execute(
+            `SELECT challan_id FROM challan
+             WHERE batch_id = ? AND challan_id IN (${ph}) AND COALESCE(total_hissa, 0) > 0`,
+            [batchId, ...ids]
+          );
+          const allowed = new Set(scoped.map((r) => r.challan_id));
+          ids = ids.filter((id) => allowed.has(id));
         }
+      } else if (batchIdValid) {
         const dayFilter = normalizeDayLabel(req.body.day || "");
         let idSql = `SELECT challan_id FROM challan WHERE batch_id = ? AND COALESCE(total_hissa, 0) > 0`;
         const idParams = [batchId];
@@ -857,11 +865,11 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       }
       if (ids.length === 0) return res.status(400).json({ message: "No valid challan ids" });
       const placeholders = ids.map(() => "?").join(",");
-      const [challans] = await db.execute(
-        `SELECT c.* FROM challan c
-         WHERE c.challan_id IN (${placeholders})`,
-        ids
-      );
+      const challanSql = batchIdValid
+        ? `SELECT c.* FROM challan c WHERE c.batch_id = ? AND c.challan_id IN (${placeholders})`
+        : `SELECT c.* FROM challan c WHERE c.challan_id IN (${placeholders})`;
+      const challanParams = batchIdValid ? [batchId, ...ids] : ids;
+      const [challans] = await db.execute(challanSql, challanParams);
       const byId = new Map(challans.map((c) => [c.challan_id, c]));
       const items = [];
       for (const id of ids) {
