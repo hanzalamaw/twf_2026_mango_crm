@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OpsSearchIcon } from '../components/OpsFilters';
 import { API_BASE } from '../config/api';
 import { useOperationsSocketRefresh } from '../utils/useOperationsSocketRefresh';
@@ -15,20 +15,19 @@ import {
   normalizeForCompare,
 } from '../utils/orderTags';
 import {
-  buildSlotFilterOptions,
-  itemMatchesDay,
-  itemMatchesSlots,
+  buildSlotFilterOptionsFromValues,
   pruneSlotFilter,
   slotFilterValuesKey,
 } from '../utils/operationsFilters';
+import { buildDeliveriesGroupsQuery, DELIVERIES_PAGE_SIZE } from '../utils/deliveriesGroupsApi';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
+import { applyChallanPatchToGroups } from '../utils/operationsGroupPatch';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
   ALLOWED_ORDER_TYPES,
   ORDER_TYPE_FILTERS,
   computeModalTotals,
   formatTotalHissa,
-  groupMatchesOrderTypeFilter,
   normalizeOrderType,
   HISSA_COUNT_TABLE_HEADERS,
   getTableHissaCounts,
@@ -104,7 +103,7 @@ function MultiSelectDropdown({ label, options = [], values = [], onChange, place
 }
 function splitUniqueCsvValues(values) { return [...new Set((Array.isArray(values) ? values : [values]).flatMap((v) => Array.isArray(v) ? v : String(v || '').split(',')).map((v) => String(v || '').trim()).filter(Boolean))]; }
 function MultiLineCell({ values, empty = '—' }) { const list = splitUniqueCsvValues(values); return list.length ? <div style={{ whiteSpace:'normal', wordBreak:'break-word', overflowWrap:'anywhere', lineHeight:1.45 }}>{list.map((v,i)=><div key={`${v}-${i}`}>{v}</div>)}</div> : <span style={{ color:'#ccc' }}>{empty}</span>; }
-const PAGE_SIZE = 50;
+const PAGE_SIZE = DELIVERIES_PAGE_SIZE;
 
 export default function OperationsCustomerSupport() {
   const { authFetch } = useAuth();
@@ -121,9 +120,14 @@ export default function OperationsCustomerSupport() {
   } = useOperationsBatchDay(authFetch);
 
   const [groups,        setGroups]        = useState([]);
+  const [totalGroups,   setTotalGroups]   = useState(0);
+  const [slotsList,     setSlotsList]     = useState([]);
   const [riders,        setRiders]        = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [err,           setErr]           = useState('');
+
+  const groupsRef = useRef(groups);
+  useEffect(() => { groupsRef.current = groups; }, [groups]);
 
   const [search,       setSearch]       = useState('');
   const [challanSearch, setChallanSearch] = useState('');
@@ -138,13 +142,34 @@ export default function OperationsCustomerSupport() {
   const [modalData,    setModalData]    = useState(null);
   const [modalLoading, setModalLoading] = useState(false);
 
+  const [searchDebounced, setSearchDebounced] = useState('');
+  const [challanDebounced, setChallanDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    const t = setTimeout(() => setChallanDebounced(challanSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [challanSearch]);
+
   const load = useCallback(async () => {
     if (!ready || selectedBatch === null) return;
-    setErr(''); setLoading(true);
+    setErr('');
+    if (groups.length === 0) setLoading(true);
     try {
-      const qs = new URLSearchParams();
-      qs.set('batch_id', selectedBatch);
-      // Load full batch; day/order type filters are client-side like Deliveries.
+      const qs = buildDeliveriesGroupsQuery({
+        batchId: selectedBatch,
+        day: selectedDay,
+        page,
+        limit: PAGE_SIZE,
+        search: searchDebounced,
+        challan: challanDebounced,
+        slots: slotFilter,
+        statuses: statusFilter,
+        riderId: riderFilter,
+        orderTypes: orderTypeFilter,
+      });
 
       const [gRes, ridRes] = await Promise.all([
         authFetch(`${API_BASE}/operations/deliveries/groups?${qs}`),
@@ -157,20 +182,63 @@ export default function OperationsCustomerSupport() {
       if (!gRes.ok) throw new Error(gData.message || 'Failed to load groups');
 
       setGroups(gData.groups || []);
+      setTotalGroups(typeof gData.total === 'number' ? gData.total : (gData.groups || []).length);
+      setSlotsList(Array.isArray(gData.slots_list) ? gData.slots_list : []);
       setRiders(Array.isArray(ridData) ? ridData : (ridData.riders || []));
     } catch (e) {
       setErr(e.message || 'Load failed');
     } finally {
       setLoading(false);
     }
-  }, [authFetch, ready, selectedBatch]);
+  }, [
+    authFetch,
+    ready,
+    selectedBatch,
+    selectedDay,
+    page,
+    searchDebounced,
+    challanDebounced,
+    slotFilter,
+    statusFilter,
+    riderFilter,
+    orderTypeFilter,
+    groups.length,
+  ]);
 
   useEffect(() => { if (ready && selectedBatch !== null) load(); }, [load, ready, selectedBatch]);
 
-  useOperationsSocketRefresh(() => {
-    loadBatches();
-    if (selectedBatch !== null) load();
-  }, [load, loadBatches, selectedBatch]);
+  useOperationsSocketRefresh(
+    (payload) => {
+      if (selectedBatch === null) return;
+
+      const action = payload?.action;
+      const challanId = payload?.challan_id ?? payload?.id;
+
+      if (action !== 'status' && action !== 'rider') {
+        load();
+        return;
+      }
+
+      if (!Number.isFinite(Number(challanId))) {
+        load();
+        return;
+      }
+
+      const targetId = Number(challanId);
+      const exists = groupsRef.current?.some((g) => Number(g.challan_id) === targetId);
+      if (!exists) {
+        load();
+        return;
+      }
+
+      const patch = {};
+      if (action === 'status') patch.delivery_status = payload.delivery_status;
+      if (action === 'rider') patch.rider_id = payload.rider_id ?? null;
+
+      setGroups((prev) => applyChallanPatchToGroups(prev, targetId, patch));
+    },
+    [load, selectedBatch]
+  );
 
   const riderMap = useMemo(() => {
     const m = {};
@@ -207,8 +275,8 @@ export default function OperationsCustomerSupport() {
   const modalDescription = useMemo(() => getDescriptionText({ ...(modalData?.challan || {}), ...(modal || {}), orders: modalData?.orders || [] }), [modal, modalData]);
 
   const slotOptions = useMemo(
-    () => buildSlotFilterOptions(groups, selectedDay),
-    [groups, selectedDay]
+    () => buildSlotFilterOptionsFromValues(slotsList),
+    [slotsList]
   );
 
   const slotOptionsKey = useMemo(
@@ -221,40 +289,13 @@ export default function OperationsCustomerSupport() {
   }, [selectedDay, slotOptionsKey]);
   const statusOptions = useMemo(() => ALL_STATUSES.map((status) => ({ value: status, label: status })), []);
 
-  const filteredGroups = useMemo(() => {
-    let list = groups;
-    if (selectedDay) list = list.filter((g) => itemMatchesDay(g, selectedDay));
-    if (slotFilter.length) list = list.filter((g) => itemMatchesSlots(g, slotFilter, selectedDay));
-    if (statusFilter.length) list = list.filter((g) => statusFilter.includes(g.derived_status || 'Pending'));
-    if (riderFilter) list = list.filter((g) => String(g.rider_id || '') === riderFilter);
-    if (orderTypeFilter.length) {
-      list = list.filter((g) => groupMatchesOrderTypeFilter(g, orderTypeFilter));
-    }
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter((g) => {
-        const hay = [
-          g.address, g.area, g.day, g.slot, g.description,
-          ...(g.booking_names || []),
-          ...(g.shareholder_names || []),
-          ...(g.contacts || []),
-          ...(g.alt_contacts || []),
-          ...(g.customer_ids || []).map(String),
-        ].filter(Boolean).join(' ').toLowerCase();
-        return hay.includes(q);
-      });
-    }
-    const challanQ = challanSearch.trim().toLowerCase();
-    if (challanQ) {
-      list = list.filter((g) => String(g.challan_id || '').toLowerCase().includes(challanQ));
-    }
-    return list;
-  }, [groups, search, challanSearch, selectedDay, slotFilter, statusFilter, riderFilter, orderTypeFilter]);
-
-  const totalPages  = Math.max(1, Math.ceil(filteredGroups.length / PAGE_SIZE));
-  const pagedGroups = useMemo(() => filteredGroups.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filteredGroups, page]);
-  useEffect(() => { setPage(1); }, [search, challanSearch, selectedDay, slotFilter, orderTypeFilter, statusFilter, riderFilter, selectedBatch]);
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  const totalPages = Math.max(1, Math.ceil(totalGroups / PAGE_SIZE));
+  useEffect(() => {
+    setPage(1);
+  }, [searchDebounced, challanDebounced, selectedDay, slotFilter, orderTypeFilter, statusFilter, riderFilter, selectedBatch]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const resetFilters = () => {
     setSearch('');
@@ -377,7 +418,7 @@ export default function OperationsCustomerSupport() {
 
         {!loading && (
           <div style={{ fontSize: '10px', color: '#999', marginBottom: '8px', flexShrink: 0 }}>
-            Showing {filteredGroups.length} of {groups.length} group{groups.length !== 1 ? 's' : ''}
+            Showing {groups.length} of {totalGroups} group{totalGroups !== 1 ? 's' : ''} matching filters
           </div>
         )}
 
@@ -385,7 +426,7 @@ export default function OperationsCustomerSupport() {
         <div className="cs-table-wrap" style={{ flex: 1, minHeight: 0, overflow: 'auto', borderRadius: '10px', border: '1px solid #ececec' }}>
           {loading ? (
             <div style={{ padding: '40px', textAlign: 'center', color: '#666', fontSize: '11px' }}>Loading…</div>
-          ) : filteredGroups.length === 0 ? (
+          ) : groups.length === 0 ? (
             <div style={{ padding: '40px', textAlign: 'center', color: '#666', fontSize: '11px' }}>
               {groups.length === 0 ? 'No groups found.' : 'No groups match the current filters.'}
             </div>
@@ -400,7 +441,7 @@ export default function OperationsCustomerSupport() {
                 </tr>
               </thead>
               <tbody>
-                {pagedGroups.map((g, idx) => {
+                {groups.map((g, idx) => {
                   const st = g.derived_status || 'Pending';
                   const rowTag = getOrderTag(g, 'hissa_count', 'waqf_hissa_count');
                   const rowHighlight = getChallanRowHighlight(rowTag);
@@ -450,7 +491,7 @@ export default function OperationsCustomerSupport() {
 
         {/* Pagination */}
         {/* Pagination */}
-{!loading && filteredGroups.length > 0 && (
+{!loading && totalGroups > 0 && (
   <div
     className="om-pagination"
     style={{
@@ -466,7 +507,7 @@ export default function OperationsCustomerSupport() {
     }}
   >
     <span style={{ fontSize: '13px', color: '#666' }}>
-      Showing {pagedGroups.length} of {filteredGroups.length} groups
+      Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalGroups)} of {totalGroups} groups
     </span>
 
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>

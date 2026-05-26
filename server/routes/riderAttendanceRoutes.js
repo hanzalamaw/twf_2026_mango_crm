@@ -31,6 +31,34 @@ function normalizeDayLabel(d) {
   return String(d || "").trim();
 }
 
+/** Accept YYYY-MM-DD HH:mm:ss or ISO from client; null = use server NOW(). */
+function parseCheckInTime(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const mysqlMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (mysqlMatch) {
+    const [, y, mo, d, h, mi, s] = mysqlMatch;
+    const dt = new Date(
+      Number(y),
+      Number(mo) - 1,
+      Number(d),
+      Number(h),
+      Number(mi),
+      Number(s || 0)
+    );
+    if (!Number.isNaN(dt.getTime())) {
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${y}-${mo}-${d} ${h}:${mi}:${pad(Number(s || 0))}`;
+    }
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}:${pad(parsed.getSeconds())}`;
+}
+
 function requireOperationParent(flags) {
   return (
     !!flags?.operation_management ||
@@ -169,11 +197,18 @@ export const registerRiderAttendanceRoutes = (app, db, verifyToken) => {
           }
         }
 
+        const checkInTimeRaw = parseCheckInTime(req.body?.check_in_time);
+        if (req.body?.check_in_time && !checkInTimeRaw) {
+          return res.status(400).json({ message: "Invalid check_in_time" });
+        }
+
         try {
           const [result] = await db.execute(
             `INSERT INTO rider_attendance (rider_id, day_label, check_in_time, photo_url, photo_drive_file_id)
-             VALUES (?, ?, NOW(), ?, ?)`,
-            [riderId, dayLabel, photoUrl, photoDriveFileId]
+             VALUES (?, ?, ${checkInTimeRaw ? "?" : "NOW()"}, ?, ?)`,
+            checkInTimeRaw
+              ? [riderId, dayLabel, checkInTimeRaw, photoUrl, photoDriveFileId]
+              : [riderId, dayLabel, photoUrl, photoDriveFileId]
           );
 
           const [inserted] = await db.execute(

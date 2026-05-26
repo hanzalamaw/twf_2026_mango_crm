@@ -6,6 +6,11 @@ import {
   syncDeliveryStatusBatchToSheet,
   syncDeliveryStatusToSheet,
 } from "../utils/googleSheetDeliveryStatus.js";
+import {
+  emptyDeliveriesGroupsPayload,
+  filterSortPaginateDeliveryGroups,
+  parseDeliveriesGroupsQuery,
+} from "../utils/deliveryGroupFilters.js";
 
 const ALLOWED_STATUSES = ["Pending", "Rider Assigned", "Dispatched", "Delivered", "Returned to Farm"];
 
@@ -453,7 +458,7 @@ async function buildDeliveriesGroupsForBatch(db, batchId, dayFilter, supervisorI
     challans = challans.filter((c) => allowed.has(c.challan_id));
   }
 
-  if (challans.length === 0) return { groups: [], batch_id: batchId };
+  if (challans.length === 0) return { groups: [], batch_id: batchId, _empty: true };
 
   const challanIds = challans.map((c) => c.challan_id);
   const placeholders = challanIds.map(() => "?").join(",");
@@ -732,6 +737,69 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       if (!batchId) batchId = await resolveLatestBatchId(db);
       if (!batchId) return res.json({ challans: [] });
 
+      const parseList = (v) => {
+        if (Array.isArray(v)) {
+          return v.flatMap((x) => parseList(x));
+        }
+        if (v == null) return [];
+        const s = String(v).trim();
+        if (!s) return [];
+        return s.split(",").map((x) => String(x).trim()).filter(Boolean);
+      };
+
+      const normalizeForCompare = (value) =>
+        String(value || "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, " ");
+
+      const normalizeDayLabel = (value) => {
+        const n = normalizeForCompare(value);
+        if (n === "day 1" || n === "day1" || n === "1") return "Day 1";
+        if (n === "day 2" || n === "day2" || n === "2") return "Day 2";
+        if (n === "day 3" || n === "day3" || n === "3") return "Day 3";
+        return String(value || "").trim() || "";
+      };
+
+      const normalizeSlotLabel = (value) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return "";
+        const m = raw.match(/slot\s*(\d+)/i);
+        if (m) return `Slot ${m[1]}`;
+        const num = raw.match(/^(\d+)$/);
+        if (num) return `Slot ${num[1]}`;
+        return raw.replace(/\bSLOT\b/gi, "Slot");
+      };
+
+      const challansPage = req.query.page != null ? Number(req.query.page) : null;
+      const challansLimit = req.query.limit != null ? Number(req.query.limit) : null;
+      const page = Number.isFinite(challansPage) && challansPage > 0 ? challansPage : 1;
+      const limit = Number.isFinite(challansLimit) && challansLimit > 0 ? challansLimit : 50;
+
+      const dayFilter = req.query.day ? normalizeDayLabel(req.query.day) : "";
+      const filterSlots = req.query.slot ? parseList(req.query.slot) : [];
+      const filterStatus = req.query.status ? parseList(req.query.status) : parseList(req.query.delivery_status);
+      const filterOrderTypes = req.query.order_type ? parseList(req.query.order_type) : [];
+      const searchQ = req.query.search ? String(req.query.search).trim().toLowerCase() : "";
+      const challanQ = req.query.challan_search || req.query.challan || req.query.challanNo ? String(req.query.challan_search || req.query.challan || req.query.challanNo).trim().toLowerCase() : "";
+
+      const wantsPaginated =
+        req.query.page != null ||
+        req.query.limit != null ||
+        Boolean(dayFilter) ||
+        (filterSlots || []).length ||
+        (filterStatus || []).length ||
+        (filterOrderTypes || []).length ||
+        searchQ ||
+        challanQ;
+
+      const whereParams = [batchId];
+      const dayWhere = dayFilter
+        ? " AND LOWER(TRIM(COALESCE(c.day, ''))) = LOWER(TRIM(?)) "
+        : "";
+
+      if (dayFilter) whereParams.push(dayFilter);
+
       const [rows] = await db.execute(
         `SELECT c.*,
                 cb.label AS batch_label, cb.created_at AS batch_created_at,
@@ -762,11 +830,122 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
                  WHERE co7.challan_id = c.challan_id) AS orders_total
          FROM challan c
          LEFT JOIN challan_batch cb ON cb.batch_id = c.batch_id
-         WHERE c.batch_id = ? AND COALESCE(c.total_hissa, 0) > 0
+        WHERE c.batch_id = ?
+          AND COALESCE(c.total_hissa, 0) > 0
+          ${dayWhere}
          ORDER BY c.day, c.slot, c.challan_id`,
-        [batchId]
+        whereParams
       );
-      res.json({ challans: rows, batch_id: batchId });
+
+      if (!wantsPaginated) {
+        return res.json({ challans: rows, batch_id: batchId });
+      }
+
+      const challanDerivedStatus = (c) => {
+        const total = Number(c.orders_total || 0);
+        const delivered = Number(c.orders_delivered || 0);
+        if (total === 0) return "Pending";
+        if (delivered === total) return "Delivered";
+        if (delivered > 0) return "Dispatched";
+        if (c.rider_id) return "Rider Assigned";
+        return "Pending";
+      };
+
+      const challanOrderTypesFromCounts = (c) => {
+        const standard = Number(c.total_standard_hissa || 0);
+        const premium = Number(c.total_premium_hissa || 0);
+        const waqf = Number(c.total_waqf_hissa || 0);
+        const exclusive = Number(c.total_exclusive_hissa || 0);
+
+        let superGoat = Number(c.total_super_goat_hissa || 0);
+        let premiumGoat = Number(c.total_premium_goat_hissa || 0);
+        let exclusiveGoat = Number(c.total_exclusive_goat_hissa || 0);
+        const legacyGoat = Number(c.total_goat_hissa || c.goat_hissa_count || 0);
+
+        // Legacy fallback: if only "goat_hissa" exists, treat it as super-goat.
+        if (superGoat === 0 && premiumGoat === 0 && exclusiveGoat === 0 && legacyGoat > 0) {
+          superGoat = legacyGoat;
+        }
+
+        const productTypes = [];
+        if (standard > 0) productTypes.push("Hissa - Standard");
+        if (premium > 0) productTypes.push("Hissa Premium");
+        if (waqf > 0) productTypes.push("Hissa - Waqf");
+        if (exclusive > 0) productTypes.push("Hissa - Exclusive");
+        if (superGoat > 0) productTypes.push("Super Goat(Hissa)");
+        if (premiumGoat > 0) productTypes.push("Premium Goat(Hissa)");
+        if (exclusiveGoat > 0) productTypes.push("Exclusive Goat(Hissa)");
+        return productTypes;
+      };
+
+      const getSlotsForChallan = (c) =>
+        String(c?.slot || "")
+          .split(",")
+          .map((x) => String(x).trim())
+          .filter(Boolean);
+
+      const itemMatchesSlots = (c, filterSlotsList) => {
+        if (!Array.isArray(filterSlotsList) || !filterSlotsList.length) return true;
+        const groupSlots = getSlotsForChallan(c).map(normalizeForCompare);
+        const wanted = filterSlotsList.map(normalizeForCompare);
+        return wanted.some((s) => groupSlots.includes(s));
+      };
+
+      const matchesFilters = (c, opts = {}) => {
+        const skipSlots = Boolean(opts.skipSlots);
+        if (dayFilter && normalizeDayLabel(c.day) !== dayFilter) return false;
+        if (!skipSlots && filterSlots.length && !itemMatchesSlots(c, filterSlots)) return false;
+        if (filterOrderTypes.length) {
+          const productTypes = challanOrderTypesFromCounts(c);
+          const ok = filterOrderTypes.some((t) => productTypes.includes(t));
+          if (!ok) return false;
+        }
+        if (filterStatus.length) {
+          const st = challanDerivedStatus(c);
+          if (!filterStatus.includes(st)) return false;
+        }
+        if (searchQ) {
+          const hay = [
+            c.address,
+            c.area,
+            c.day,
+            c.slot,
+            c.booking_name,
+            c.shareholders_csv,
+            c.contacts_csv,
+            c.alt_contacts_csv,
+            c.customer_ids_csv,
+            c.description,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(searchQ)) return false;
+        }
+        if (challanQ && !String(c.challan_id || "").toLowerCase().includes(challanQ)) return false;
+        return true;
+      };
+
+      const filteredNoSlot = rows.filter((c) => matchesFilters(c, { skipSlots: true }));
+
+      const slotsSet = new Map();
+      for (const c of filteredNoSlot) {
+        for (const sl of getSlotsForChallan(c)) {
+          const label = normalizeSlotLabel(sl);
+          const key = normalizeForCompare(label);
+          if (label && key && !slotsSet.has(key)) slotsSet.set(key, label);
+        }
+      }
+      const slots_list = [...slotsSet.values()].sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true })
+      );
+
+      const filtered = rows.filter((c) => matchesFilters(c));
+      const total = filtered.length;
+      const offset = (page - 1) * limit;
+      const challans = filtered.slice(offset, offset + limit);
+
+      return res.json({ challans, total, page, limit, batch_id: batchId, slots_list });
     } catch (error) {
       logError("OPERATIONS", "List challans error", error);
       res.status(500).json({ message: "Server error" });
@@ -1154,12 +1333,16 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
       const flags = await assertSub(req, res, (f) => f.operation_deliveries_management || f.operation_challan_management || f.operation_customer_support);
       if (!flags) return;
 
+      const queryOpts = parseDeliveriesGroupsQuery(req.query);
       let batchId = req.query.batch_id ? Number(req.query.batch_id) : null;
       if (!batchId) batchId = await resolveLatestBatchId(db);
-      if (!batchId) return res.json({ groups: [] });
+      if (!batchId) return res.json(emptyDeliveriesGroupsPayload(null, queryOpts));
 
-      const dayFilter = req.query.day ? String(req.query.day).trim() : null;
-      const payload = await buildDeliveriesGroupsForBatch(db, batchId, dayFilter, null);
+      const dayFilter = queryOpts.day;
+      const built = await buildDeliveriesGroupsForBatch(db, batchId, dayFilter, null);
+      if (built._empty) return res.json(emptyDeliveriesGroupsPayload(batchId, queryOpts));
+
+      const payload = filterSortPaginateDeliveryGroups(built.groups, queryOpts, batchId);
       res.json(payload);
     } catch (error) {
       logError("OPERATIONS", "Deliveries groups error", error);
@@ -1182,10 +1365,13 @@ export const registerOperationsRoutes = (app, db, verifyToken, io = null) => {
           ? await resolveLatestBatchIdForDay(db, dayFilter)
           : await resolveLatestBatchId(db);
       }
-      if (!batchId) return res.json({ groups: [] });
+      if (!batchId) return res.json(emptyDeliveriesGroupsPayload(null, parseDeliveriesGroupsQuery(req.query)));
 
-      const payload = await buildDeliveriesGroupsForBatch(db, batchId, dayFilter, sup.supervisor_id);
-      res.json(payload);
+      const queryOpts = parseDeliveriesGroupsQuery(req.query);
+      const built = await buildDeliveriesGroupsForBatch(db, batchId, dayFilter, sup.supervisor_id);
+      if (built._empty) return res.json(emptyDeliveriesGroupsPayload(batchId, queryOpts));
+
+      res.json(filterSortPaginateDeliveryGroups(built.groups, queryOpts, batchId));
     } catch (error) {
       logError("OPERATIONS", "Supervisor deliveries groups error", error);
       res.status(500).json({ message: "Server error" });

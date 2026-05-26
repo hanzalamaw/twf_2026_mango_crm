@@ -17,9 +17,7 @@ import {
   DAY_OPTIONS,
 } from '../utils/orderTags';
 import {
-  buildSlotFilterOptions,
-  itemMatchesDay,
-  itemMatchesSlots,
+  buildSlotFilterOptionsFromValues,
   pruneSlotFilter,
   slotFilterValuesKey,
 } from '../utils/operationsFilters';
@@ -28,7 +26,6 @@ import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
   ALLOWED_ORDER_TYPES,
   ORDER_TYPE_FILTERS,
-  challanMatchesOrderTypeFilter,
   computeModalTotals,
   formatTotalHissa,
   normalizeOrderType,
@@ -1056,6 +1053,8 @@ export default function OperationsChallan() {
 
   const [search,      setSearch]      = useState('');
   const [challanSearch, setChallanSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
+  const [challanDebounced, setChallanDebounced] = useState('');
   const [filterDay,   setFilterDay]   = useState('Day 1');
   const [generateDay, setGenerateDay] = useState('Day 1');
   const [filterSlot,  setFilterSlot]  = useState([]);
@@ -1066,12 +1065,25 @@ export default function OperationsChallan() {
   const [modal,       setModal]       = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
+  const [slotsList, setSlotsList] = useState([]);
+  const [totalChallans, setTotalChallans] = useState(0);
+
   useEffect(() => {
     if (selectedDay) {
       setFilterDay(selectedDay);
       setGenerateDay(selectedDay);
     }
   }, [selectedDay]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setChallanDebounced(challanSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [challanSearch]);
 
   const loadRiders = useCallback(async () => {
     try {
@@ -1083,17 +1095,31 @@ export default function OperationsChallan() {
   const load = useCallback(async () => {
     setErr(''); setLoading(true);
     try {
-      const qs = selectedBatch ? `?batch_id=${selectedBatch}` : '';
-      const res = await authFetch(`${API_BASE}/operations/challans${qs}`);
+      if (selectedBatch === null) return;
+
+      const qs = new URLSearchParams();
+      qs.set('batch_id', String(selectedBatch));
+      qs.set('page', String(page));
+      qs.set('limit', String(PAGE_SIZE));
+      if (filterDay) qs.set('day', filterDay);
+      (filterSlot || []).forEach((s) => qs.append('slot', s));
+      (filterStatus || []).forEach((s) => qs.append('status', s));
+      (filterOrderType || []).forEach((t) => qs.append('order_type', t));
+      if (searchDebounced) qs.set('search', searchDebounced);
+      if (challanDebounced) qs.set('challan_search', challanDebounced);
+
+      const res = await authFetch(`${API_BASE}/operations/challans?${qs.toString()}`);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || 'Failed to load challans');
       const data = await res.json();
-      setChallans(data.challans || []);
+      setChallans(Array.isArray(data.challans) ? data.challans : []);
+      setTotalChallans(Number.isFinite(Number(data.total)) ? Number(data.total) : (Array.isArray(data.challans) ? data.challans.length : 0));
+      setSlotsList(Array.isArray(data.slots_list) ? data.slots_list : []);
     } catch (e) {
       setErr(e.message || 'Load failed');
     } finally {
       setLoading(false);
     }
-  }, [authFetch, selectedBatch]);
+  }, [authFetch, selectedBatch, page, filterDay, filterSlot, filterStatus, filterOrderType, searchDebounced, challanDebounced]);
 
   useEffect(() => { loadRiders(); }, []);
   useEffect(() => { if (selectedBatch !== null) load(); }, [load, selectedBatch]);
@@ -1136,10 +1162,9 @@ export default function OperationsChallan() {
     [modal]
   );
 
-  const dayOptions  = useMemo(() => [...new Set(challans.map((c) => String(c.day || '').trim()).filter(Boolean))].sort(), [challans]);
   const slotFilterOptions = useMemo(
-    () => buildSlotFilterOptions(challans, filterDay),
-    [challans, filterDay]
+    () => buildSlotFilterOptionsFromValues(slotsList),
+    [slotsList]
   );
 
   const slotOptionsKey = useMemo(
@@ -1152,26 +1177,12 @@ export default function OperationsChallan() {
   }, [filterDay, slotOptionsKey]);
   const statusFilterOptions = useMemo(() => STATUS_STYLES ? Object.keys(STATUS_STYLES).map((s) => ({ value: s, label: s })) : [], []);
 
-  const displayRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const challanQ = challanSearch.trim().toLowerCase();
-    return challans.filter((c) => {
-      if (filterDay && !itemMatchesDay(c, filterDay)) return false;
-      if (filterSlot.length && !itemMatchesSlots(c, filterSlot, filterDay)) return false;
-      if (filterOrderType.length && !challanMatchesOrderTypeFilter(c, filterOrderType)) return false;
-      if (filterStatus.length && !filterStatus.includes(challanDerivedStatus(c))) return false;
-      if (q) {
-        const hay = [c.address, c.area, c.day, c.slot, c.booking_name, c.shareholders_csv, c.contacts_csv, c.alt_contacts_csv, c.customer_ids_csv, c.description].filter(Boolean).join(' ').toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      if (challanQ && !String(c.challan_id || '').toLowerCase().includes(challanQ)) return false;
-      return true;
-    });
-  }, [challans, search, challanSearch, filterDay, filterSlot, filterStatus, filterOrderType]);
+  const displayRows = challans;
+  const pagedRows = challans;
 
-  const totalPages = Math.max(1, Math.ceil(displayRows.length / PAGE_SIZE));
-  const pagedRows  = useMemo(() => displayRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [displayRows, page]);
-  useEffect(() => { setPage(1); }, [search, challanSearch, filterDay, filterSlot, filterStatus, filterOrderType, selectedBatch]);
+  const totalPages = Math.max(1, Math.ceil(totalChallans / PAGE_SIZE));
+
+  useEffect(() => { setPage(1); }, [searchDebounced, challanDebounced, filterDay, filterSlot, filterStatus, filterOrderType, selectedBatch]);
   useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
 
   const toggleOne = (id) => setSelectedIds((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1210,9 +1221,31 @@ export default function OperationsChallan() {
   const onPrintPdf = async () => {
     if (!selectedBatch) return alert('Select a batch first.');
     const printAll = selectedIds.size === 0;
-    const rowsToPrint = printAll
+    let rowsToPrint = printAll
       ? displayRows
       : displayRows.filter((c) => selectedIds.has(c.challan_id));
+
+    // With server-side pagination, "print all" should mean "print all filtered",
+    // not just the visible page. Fetch again with a large limit only for printing.
+    if (printAll) {
+      const qs = new URLSearchParams();
+      qs.set('batch_id', String(selectedBatch));
+      qs.set('page', '1');
+      qs.set('limit', '1000000');
+      if (filterDay) qs.set('day', filterDay);
+      (filterSlot || []).forEach((s) => qs.append('slot', s));
+      (filterStatus || []).forEach((s) => qs.append('status', s));
+      (filterOrderType || []).forEach((t) => qs.append('order_type', t));
+      const q = String(search || '').trim();
+      if (q) qs.set('search', q);
+      const cq = String(challanSearch || '').trim();
+      if (cq) qs.set('challan_search', cq);
+
+      const res = await authFetch(`${API_BASE}/operations/challans?${qs.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Failed to load challans for printing');
+      rowsToPrint = Array.isArray(data.challans) ? data.challans : [];
+    }
     if (!rowsToPrint.length) {
       return alert(
         printAll
@@ -1381,7 +1414,7 @@ export default function OperationsChallan() {
 
         {!loading && (
           <div style={{ fontSize: '10px', color: '#999', marginBottom: '8px', flexShrink: 0 }}>
-            Showing {displayRows.length} of {challans.length} challan{challans.length !== 1 ? 's' : ''}
+            Showing {displayRows.length} of {totalChallans} challan{totalChallans !== 1 ? 's' : ''}
           </div>
         )}
 
@@ -1482,7 +1515,7 @@ export default function OperationsChallan() {
     }}
   >
     <span style={{ fontSize: '13px', color: '#666' }}>
-      Showing {pagedRows.length} of {displayRows.length} challans
+      Showing {pagedRows.length} of {totalChallans} challans
     </span>
 
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>

@@ -80,6 +80,19 @@ export function groupMatchesDay(g, filterDay) {
   return itemMatchesDay(g, filterDay);
 }
 
+/** Slot dropdown from server `slots_list` (distinct values for batch/day). */
+export function buildSlotFilterOptionsFromValues(slotValues) {
+  const seen = new Map();
+  for (const sl of slotValues || []) {
+    const label = normalizeSlotLabel(sl);
+    const key = normalizeForCompare(label);
+    if (key && !seen.has(key)) seen.set(key, label);
+  }
+  return [...seen.values()]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((slot) => ({ value: slot, label: slot }));
+}
+
 export function buildSlotFilterOptions(items, filterDay, getSlots = getSlotsForItem) {
   const seen = new Map();
   for (const item of items || []) {

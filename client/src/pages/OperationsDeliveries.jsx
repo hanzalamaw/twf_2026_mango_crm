@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  applyChallanPatchToGroups,
+  markSkipSocketRefresh,
+} from '../utils/operationsGroupPatch';
 import { OpsSearchIcon } from '../components/OpsFilters';
 import { useSearchParams } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -17,14 +21,12 @@ import {
   normalizeForCompare,
 } from '../utils/orderTags';
 import {
-  buildSlotFilterOptions,
+  buildSlotFilterOptionsFromValues,
   getGroupSlots,
-  getSlotsForItem,
-  itemMatchesDay,
-  itemMatchesSlots,
   pruneSlotFilter,
   slotFilterValuesKey,
 } from '../utils/operationsFilters';
+import { buildDeliveriesGroupsQuery, DELIVERIES_PAGE_SIZE } from '../utils/deliveriesGroupsApi';
 import { useOperationsBatchDay } from '../utils/useOperationsBatchDay';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
@@ -33,9 +35,7 @@ import {
   buildSummaryStatCards,
   computeModalTotals,
   formatTotalHissa,
-  groupMatchesOrderTypeFilter,
   normalizeOrderType,
-  summarizeDeliveryGroups,
   HISSA_COUNT_TABLE_HEADERS,
   getTableHissaCounts,
   hissaCountCellValues,
@@ -164,7 +164,7 @@ function MultiLineCell({ values, empty = '—', style = {} }) {
   );
 }
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = DELIVERIES_PAGE_SIZE;
 
 function SearchableRiderSelect({ value, disabled, onChange, riders, title, menuPlacement = 'above', fallbackLabel, fullWidth = false }) {
   const [open, setOpen] = useState(false);
@@ -381,6 +381,9 @@ export default function OperationsDeliveries() {
   } = useOperationsBatchDay(authFetch);
 
   const [groups,        setGroups]        = useState([]);
+  const [totalGroups,   setTotalGroups]   = useState(0);
+  const [slotsList,     setSlotsList]     = useState([]);
+  const [listSummary,   setListSummary]   = useState(null);
   const [riders,        setRiders]        = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [err,           setErr]           = useState('');
@@ -406,6 +409,7 @@ export default function OperationsDeliveries() {
   const scannerRef     = useRef(null);
   const groupsRef      = useRef(groups);
   const slotDropdownRef = useRef(null);
+  const skipSocketRefreshUntilRef = useRef(0);
 
   useEffect(() => { groupsRef.current = groups; }, [groups]);
 
@@ -425,39 +429,111 @@ export default function OperationsDeliveries() {
     if (selectedDay) setFilterDay(selectedDay);
   }, [selectedDay]);
 
-  const load = useCallback(async () => {
-    setErr(''); setLoading(true);
+  const [searchDebounced, setSearchDebounced] = useState('');
+  const [challanDebounced, setChallanDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    const t = setTimeout(() => setChallanDebounced(challanSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [challanSearch]);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (selectedBatch === null) return;
+    if (!silent) setErr('');
+    if (!silent && groups.length === 0) setLoading(true);
     try {
-      // NOTE: we do NOT pass day/slot filters to the backend.
-      // All filtering is done client-side so day+slot combos always work
-      // against the full dataset regardless of casing differences in the DB.
-      const qs = selectedBatch ? `?batch_id=${selectedBatch}` : '';
+      const qs = buildDeliveriesGroupsQuery({
+        batchId: selectedBatch,
+        day: filterDay,
+        page,
+        limit: PAGE_SIZE,
+        search: searchDebounced,
+        challan: challanDebounced,
+        slots: filterSlots,
+        statuses: filterStatus,
+        riderId: filterRider,
+        orderTypes: filterOrderType,
+        qrToken: scanMatchToken,
+      });
       const [gRes, rRes] = await Promise.all([
-        authFetch(`${API_BASE}/operations/deliveries/groups${qs}`),
+        authFetch(`${API_BASE}/operations/deliveries/groups?${qs}`),
         authFetch(`${API_BASE}/operations/riders`),
       ]);
       if (!gRes.ok) throw new Error((await gRes.json().catch(() => ({}))).message || 'Failed to load deliveries');
       const gData = await gRes.json();
       setGroups(gData.groups || []);
+      setTotalGroups(typeof gData.total === 'number' ? gData.total : (gData.groups || []).length);
+      setSlotsList(Array.isArray(gData.slots_list) ? gData.slots_list : []);
+      setListSummary(gData.summary || null);
       if (rRes.ok) setRiders(await rRes.json());
       else setRiders([]);
     } catch (e) {
       setErr(e.message || 'Load failed');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [authFetch, selectedBatch]);
+  }, [
+    authFetch,
+    selectedBatch,
+    filterDay,
+    page,
+    searchDebounced,
+    challanDebounced,
+    filterSlots,
+    filterStatus,
+    filterRider,
+    filterOrderType,
+    scanMatchToken,
+    groups.length,
+  ]);
 
-  useEffect(() => { if (selectedBatch !== null) load(); }, [load, selectedBatch]);
-
-  useOperationsSocketRefresh(() => {
-    loadBatches();
+  useEffect(() => {
     if (selectedBatch !== null) load();
-  }, [load, loadBatches, selectedBatch]);
+  }, [load, selectedBatch]);
+
+  useOperationsSocketRefresh(
+    (payload) => {
+      if (selectedBatch === null) return;
+
+      const action = payload?.action;
+      const challanId = payload?.challan_id ?? payload?.id;
+
+      // Regeneration changes many rows at once; safest to reload.
+      if (action !== 'status' && action !== 'rider') {
+        load({ silent: true });
+        return;
+      }
+
+      if (!Number.isFinite(Number(challanId))) {
+        load({ silent: true });
+        return;
+      }
+
+      const targetId = Number(challanId);
+      const exists = groupsRef.current?.some((g) => Number(g.challan_id) === targetId);
+      if (!exists) {
+        // If the changed row isn’t on the current page, reload to keep totals consistent.
+        load({ silent: true });
+        return;
+      }
+
+      const patch = {};
+      if (action === 'status') patch.delivery_status = payload.delivery_status;
+      if (action === 'rider') patch.rider_id = payload.rider_id ?? null;
+
+      setGroups((prev) => applyChallanPatchToGroups(prev, targetId, patch));
+    },
+    [load, selectedBatch],
+    1200,
+    skipSocketRefreshUntilRef
+  );
 
   const slotFilterOptions = useMemo(
-    () => buildSlotFilterOptions(groups, filterDay),
-    [groups, filterDay]
+    () => buildSlotFilterOptionsFromValues(slotsList),
+    [slotsList]
   );
 
   const slotOptionsKey = useMemo(
@@ -472,68 +548,25 @@ export default function OperationsDeliveries() {
   const orderTypeOptions = ORDER_TYPE_FILTERS;
   const statusOptions = useMemo(() => STATUSES.map((s) => ({ value: s, label: s })), []);
 
-  // ── filter + sort ────────────────────────────────────────────
-  // All string comparisons go through normalizeForCompare so that
-  // "DAY 1" / "Day 1" / "day 1" and "SLOT 1" / "Slot 1" all match.
-  const displayGroups = useMemo(() => {
-    let list = groups;
+  const summary = listSummary || {};
+  const summaryCards = useMemo(() => buildSummaryStatCards(summary), [listSummary]);
 
-    // general search
-    const q = search.trim().toLowerCase();
-    if (q) {
-      list = list.filter((g) =>
-        [g.address, g.area, g.day, ...(g.shareholder_names||[]), ...(g.booking_names||[]), ...(g.contacts||[]), ...(g.customer_ids||[]).map(String)]
-          .filter(Boolean).join(' ').toLowerCase().includes(q)
-      );
-    }
+  const totalPages = Math.max(1, Math.ceil(totalGroups / PAGE_SIZE));
 
-    // challan no search
-    const challanQ = challanSearch.trim().toLowerCase();
-    if (challanQ) {
-      list = list.filter((g) => String(g.challan_id || '').toLowerCase().includes(challanQ));
-    }
-
-    if (filterDay) list = list.filter((g) => itemMatchesDay(g, filterDay));
-    if (filterSlots.length) list = list.filter((g) => itemMatchesSlots(g, filterSlots, filterDay));
-
-    if (filterStatus.length) list = list.filter((g) => filterStatus.includes(g.derived_status || 'Pending'));
-    if (filterRider)  list = list.filter((g) => String(g.rider_id || '') === filterRider);
-    if (filterOrderType.length) list = list.filter((g) => groupMatchesOrderTypeFilter(g, filterOrderType));
-    if (scanMatchToken) list = list.filter((g) => g.qr_token === scanMatchToken);
-
-    // sort: day (normalised) → first slot (normalised) → address
-    list = [...list].sort((a, b) => {
-      const dayA = normalizeForCompare(a.day);
-      const dayB = normalizeForCompare(b.day);
-      if (dayA !== dayB) return dayA.localeCompare(dayB);
-
-      const slotA = normalizeForCompare(getSlotsForItem(a, filterDay)[0] || '');
-      const slotB = normalizeForCompare(getSlotsForItem(b, filterDay)[0] || '');
-      if (slotA !== slotB) return slotA.localeCompare(slotB, undefined, { numeric: true });
-
-      return String(a.address || '').trim().toLowerCase()
-        .localeCompare(String(b.address || '').trim().toLowerCase());
-    });
-
-    return list;
-  }, [groups, search, challanSearch, filterDay, filterSlots, filterStatus, filterRider, filterOrderType, scanMatchToken]);
-
-  const summary = useMemo(() => summarizeDeliveryGroups(displayGroups), [displayGroups]);
-  const summaryCards = useMemo(() => buildSummaryStatCards(summary), [summary]);
-
-  const totalPages  = Math.max(1, Math.ceil(displayGroups.length / PAGE_SIZE));
-  const pagedGroups = useMemo(() => displayGroups.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE), [displayGroups, page]);
-
-  useEffect(() => { setPage(1); }, [search, challanSearch, filterDay, filterSlots, filterStatus, filterRider, filterOrderType, scanMatchToken, selectedBatch]);
-  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+  useEffect(() => {
+    setPage(1);
+  }, [searchDebounced, challanDebounced, filterDay, filterSlots, filterStatus, filterRider, filterOrderType, scanMatchToken, selectedBatch]);
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const rowDomId = (g) => `dlv-${g.challan_id || g.group_key}`;
 
   useEffect(() => {
     if (!scanMatchToken) return;
-    const first = displayGroups[0]; if (!first) return;
+    const first = groups[0]; if (!first) return;
     document.getElementById(rowDomId(first))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [scanMatchToken, displayGroups]);
+  }, [scanMatchToken, groups]);
 
   const openChallanModal = useCallback(async (token) => {
     if (!token) return;
@@ -633,44 +666,72 @@ export default function OperationsDeliveries() {
 
   const updateModalStatus = async (delivery_status) => {
     if (!modal?.challan?.challan_id) return;
+    const challanId = modal.challan.challan_id;
+    const token = modal.challan.qr_token;
+    const snapshot = groups;
     setSaving(true);
-    try {
-      const res = await authFetch(`${API_BASE}/operations/challans/${modal.challan.challan_id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delivery_status }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Update failed');
-      await openChallanModal(modal.challan.qr_token); await load();
-    } catch (e) { setErr(e.message || 'Update failed'); } finally { setSaving(false); }
-  };
-
-  const updateModalRider = async (rider_id) => {
-    if (!modal?.challan?.challan_id) return;
-    setSaving(true);
-    try {
-      const res = await authFetch(`${API_BASE}/operations/challans/${modal.challan.challan_id}/rider`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rider_id: rider_id === '' ? null : Number(rider_id) }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Update failed');
-      await openChallanModal(modal.challan.qr_token); await load();
-    } catch (e) { setErr(e.message || 'Update failed'); } finally { setSaving(false); }
-  };
-
-  const patchGroupRider = async (challanId, rider_id) => {
-    if (!challanId) return; setSaving(true);
-    try {
-      const res = await authFetch(`${API_BASE}/operations/challans/${challanId}/rider`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rider_id: rider_id === '' ? null : Number(rider_id) }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Update failed');
-      await load();
-    } catch (e) { setErr(e.message || 'Update failed'); } finally { setSaving(false); }
-  };
-
-  const patchGroupStatus = async (challanId, delivery_status) => {
-    if (!challanId) return; setSaving(true);
+    markSkipSocketRefresh(skipSocketRefreshUntilRef);
+    setGroups((list) => applyChallanPatchToGroups(list, challanId, { delivery_status }));
     try {
       const res = await authFetch(`${API_BASE}/operations/challans/${challanId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delivery_status }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || 'Update failed');
-      await load();
-    } catch (e) { setErr(e.message || 'Update failed'); } finally { setSaving(false); }
+      if (token) await openChallanModal(token);
+    } catch (e) {
+      setGroups(snapshot);
+      setErr(e.message || 'Update failed');
+    } finally { setSaving(false); }
+  };
+
+  const updateModalRider = async (rider_id) => {
+    if (!modal?.challan?.challan_id) return;
+    const challanId = modal.challan.challan_id;
+    const token = modal.challan.qr_token;
+    const snapshot = groups;
+    setSaving(true);
+    markSkipSocketRefresh(skipSocketRefreshUntilRef);
+    setGroups((list) => applyChallanPatchToGroups(list, challanId, { rider_id }));
+    try {
+      const res = await authFetch(`${API_BASE}/operations/challans/${challanId}/rider`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rider_id: rider_id === '' ? null : Number(rider_id) }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Update failed');
+      if (token) await openChallanModal(token);
+    } catch (e) {
+      setGroups(snapshot);
+      setErr(e.message || 'Update failed');
+    } finally { setSaving(false); }
+  };
+
+  const patchGroupRider = async (challanId, rider_id) => {
+    if (!challanId) return;
+    const snapshot = groups;
+    setSaving(true);
+    markSkipSocketRefresh(skipSocketRefreshUntilRef);
+    setGroups((list) => applyChallanPatchToGroups(list, challanId, { rider_id }));
+    try {
+      const res = await authFetch(`${API_BASE}/operations/challans/${challanId}/rider`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rider_id: rider_id === '' ? null : Number(rider_id) }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Update failed');
+    } catch (e) {
+      setGroups(snapshot);
+      setErr(e.message || 'Update failed');
+    } finally { setSaving(false); }
+  };
+
+  const patchGroupStatus = async (challanId, delivery_status) => {
+    if (!challanId) return;
+    const snapshot = groups;
+    setSaving(true);
+    markSkipSocketRefresh(skipSocketRefreshUntilRef);
+    setGroups((list) => applyChallanPatchToGroups(list, challanId, { delivery_status }));
+    try {
+      const res = await authFetch(`${API_BASE}/operations/challans/${challanId}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delivery_status }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Update failed');
+    } catch (e) {
+      setGroups(snapshot);
+      setErr(e.message || 'Update failed');
+    } finally { setSaving(false); }
   };
 
   const resetFilters = () => {
@@ -856,14 +917,14 @@ export default function OperationsDeliveries() {
           </div>
         )}
         {err && <div style={{ padding:'10px', background:'#FFF5F2', color:'#C62828', borderRadius:'6px', marginBottom:'13px', flexShrink:0, fontSize:'10px', fontWeight:'600' }}>{err}</div>}
-        {!loading && <div style={{ fontSize:'10px', color:'#999', marginBottom:'8px', flexShrink:0 }}>Showing {displayGroups.length} of {groups.length} groups</div>}
+        {!loading && <div style={{ fontSize:'10px', color:'#999', marginBottom:'8px', flexShrink:0 }}>Showing {groups.length} of {totalGroups} groups matching filters</div>}
 
         {/* Table */}
         <div className="om-table-wrap" style={{ flex:1, minHeight:0, overflow:'auto', borderRadius:'10px', border:'1px solid #ececec' }}>
           {loading ? (
             <div style={{ padding:'40px', textAlign:'center', color:'#666', fontSize:'11px' }}>Loading…</div>
-          ) : displayGroups.length === 0 ? (
-            <div style={{ padding:'40px', textAlign:'center', color:'#666', fontSize:'11px' }}>{groups.length===0 ? 'No challans for this batch.' : 'No rows match the current filters.'}</div>
+          ) : groups.length === 0 ? (
+            <div style={{ padding:'40px', textAlign:'center', color:'#666', fontSize:'11px' }}>{totalGroups===0 && !searchDebounced && !challanDebounced && !filterSlots.length && !filterStatus.length && !filterRider && !filterOrderType.length && !scanMatchToken ? 'No challans for this batch.' : 'No rows match the current filters.'}</div>
           ) : (
             <table className="ops-data-table" style={{ width:'100%', borderCollapse:'collapse', fontSize:'11px', tableLayout:'auto' }}>
               
@@ -875,7 +936,7 @@ export default function OperationsDeliveries() {
                 </tr>
               </thead>
               <tbody>
-                {pagedGroups.map((g, idx) => {
+                {groups.map((g, idx) => {
                   const st = g.derived_status || 'Pending';
                   const rowTag = getOrderTag(g);
                   const rowHighlight = getChallanRowHighlight(rowTag);
@@ -931,7 +992,7 @@ export default function OperationsDeliveries() {
 
         {/* Pagination */}
         {/* Pagination */}
-{!loading && displayGroups.length > 0 && (
+{!loading && totalGroups > 0 && (
   <div
     className="om-pagination"
     style={{
@@ -947,7 +1008,7 @@ export default function OperationsDeliveries() {
     }}
   >
     <span style={{ fontSize: '13px', color: '#666' }}>
-      Showing {pagedGroups.length} of {displayGroups.length} groups
+      Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalGroups)} of {totalGroups} groups
     </span>
 
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>

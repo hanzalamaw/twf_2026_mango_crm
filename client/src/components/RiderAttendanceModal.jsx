@@ -20,6 +20,34 @@ function formatCheckInTime(value) {
   return formatTimeAmPm(d);
 }
 
+/** HH:mm for <input type="time" /> */
+function toTimeInputValue(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+/** Today's date + HH:mm → local MySQL-style datetime string */
+function timeInputToLocalDatetime(timeStr, dateRef = new Date()) {
+  const [h, m] = String(timeStr || '').split(':').map((x) => Number(x));
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+  const d = new Date(dateRef);
+  d.setHours(h, m, 0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+}
+
+function formatTimeInputLabel(timeStr) {
+  if (!timeStr) return '';
+  const [h, m] = timeStr.split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return formatTimeAmPm(d);
+}
+
 function dayBadgeStyle(day) {
   const map = {
     'Day 1': { bg: '#E3F2FD', fg: '#1565C0' },
@@ -51,7 +79,8 @@ async function getCameraStream() {
 
 export default function RiderAttendanceModal({ rider, authFetch, onClose }) {
   const [selectedDay, setSelectedDay] = useState('Day 1');
-  const [currentTime, setCurrentTime] = useState(() => formatTimeAmPm(new Date()));
+  const [checkInTime, setCheckInTime] = useState(() => toTimeInputValue(new Date()));
+  const [timeManuallyEdited, setTimeManuallyEdited] = useState(false);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [history, setHistory] = useState([]);
@@ -70,11 +99,12 @@ export default function RiderAttendanceModal({ rider, authFetch, onClose }) {
   const riderName = rider?.rider_name || 'Rider';
 
   useEffect(() => {
-    const tick = () => setCurrentTime(formatTimeAmPm(new Date()));
+    if (timeManuallyEdited) return undefined;
+    const tick = () => setCheckInTime(toTimeInputValue(new Date()));
     tick();
-    const id = setInterval(tick, 30000);
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [timeManuallyEdited]);
 
   useEffect(() => {
     return () => {
@@ -213,6 +243,8 @@ export default function RiderAttendanceModal({ rider, authFetch, onClose }) {
     try {
       const form = new FormData();
       form.append('day_label', selectedDay);
+      const checkInDatetime = timeInputToLocalDatetime(checkInTime);
+      if (checkInDatetime) form.append('check_in_time', checkInDatetime);
       if (photoFile) form.append('photo', photoFile);
 
       const res = await authFetch(`${API_BASE}/riders/${riderId}/attendance`, {
@@ -495,11 +527,36 @@ export default function RiderAttendanceModal({ rider, authFetch, onClose }) {
           </div>
 
           <div style={{ marginBottom: '12px' }}>
-            <div style={{ fontSize: '10px', color: '#666', marginBottom: '6px' }}>Time</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+              <div style={{ fontSize: '10px', color: '#666' }}>Time</div>
+              {timeManuallyEdited && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTimeManuallyEdited(false);
+                    setCheckInTime(toTimeInputValue(new Date()));
+                  }}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: '#FF5722',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                >
+                  Use current time
+                </button>
+              )}
+            </div>
             <input
-              type="text"
-              readOnly
-              value={currentTime}
+              type="time"
+              value={checkInTime}
+              onChange={(e) => {
+                setCheckInTime(e.target.value);
+                setTimeManuallyEdited(true);
+              }}
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
@@ -507,10 +564,15 @@ export default function RiderAttendanceModal({ rider, authFetch, onClose }) {
                 borderRadius: '8px',
                 border: '1px solid #e0e0e0',
                 fontSize: '12px',
-                background: '#FAFAFA',
+                background: '#fff',
                 color: '#333',
               }}
             />
+            <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>
+              {timeManuallyEdited
+                ? `Custom: ${formatTimeInputLabel(checkInTime) || checkInTime}`
+                : `Live: ${formatTimeInputLabel(checkInTime) || '—'} (updates every second)`}
+            </div>
           </div>
 
           <div style={{ marginBottom: '14px' }}>

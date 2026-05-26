@@ -329,7 +329,9 @@ export default function OperationsDashboard() {
     load();
   }, [load]);
 
-  useOperationsSocketRefresh(() => load(), []);
+  useOperationsSocketRefresh(() => {
+    if (document.visibilityState === 'visible') load();
+  }, []);
 
   const s = stats || {};
   const areas = s.areas || [];

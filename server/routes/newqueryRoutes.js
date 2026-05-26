@@ -179,8 +179,56 @@ export const registerNewQueryRoutes = (app, db, verifyToken) => {
   // ---------- Get all leads ----------
   app.get("/api/leads", verifyToken, async (req, res) => {
     try {
-      const [leads] = await db.execute(`SELECT * FROM leads ORDER BY created_at DESC`);
-      res.json(leads);
+      const pageRaw = req.query.page;
+      const limitRaw = req.query.limit;
+      const search = req.query.search ? String(req.query.search).trim().toLowerCase() : "";
+
+      const shouldPaginate =
+        pageRaw != null || limitRaw != null || search !== "";
+
+      if (!shouldPaginate) {
+        const [leads] = await db.execute(`SELECT * FROM leads ORDER BY created_at DESC`);
+        return res.json(leads);
+      }
+
+      const page = Number.isFinite(Number(pageRaw)) && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
+      const limit = Number.isFinite(Number(limitRaw)) && Number(limitRaw) > 0 ? Number(limitRaw) : 50;
+      const offset = (page - 1) * limit;
+
+      const like = `%${search}%`;
+
+      const whereSql = search
+        ? `WHERE (
+            LOWER(TRIM(COALESCE(contact, '')))        LIKE ?
+            OR LOWER(TRIM(COALESCE(booking_name, ''))) LIKE ?
+            OR LOWER(TRIM(COALESCE(shareholder_name, ''))) LIKE ?
+            OR LOWER(TRIM(COALESCE(alt_contact, ''))) LIKE ?
+            OR LOWER(TRIM(COALESCE(address, '')))      LIKE ?
+            OR LOWER(TRIM(COALESCE(area, '')))         LIKE ?
+            OR LOWER(TRIM(COALESCE(day, '')))           LIKE ?
+            OR LOWER(TRIM(COALESCE(reference, '')))    LIKE ?
+            OR LOWER(TRIM(COALESCE(closed_by, '')))     LIKE ?
+            OR LOWER(TRIM(COALESCE(description, '')))  LIKE ?
+          )`
+        : "";
+
+      // total
+      const [countRows] = await db.execute(
+        `SELECT COUNT(*) AS total FROM leads ${whereSql}`,
+        search ? [like, like, like, like, like, like, like, like, like, like] : []
+      );
+      const total = Number(countRows[0]?.total || 0);
+
+      const [leads] = await db.execute(
+        `SELECT *
+         FROM leads
+         ${whereSql}
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`,
+        search ? [...([like, like, like, like, like, like, like, like, like, like]), limit, offset] : [limit, offset]
+      );
+
+      return res.json({ leads, total, page, limit });
     } catch (error) {
       logError("LEAD", "List leads error", error);
       res.status(500).json({ message: "Server error" });

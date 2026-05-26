@@ -406,20 +406,17 @@ export default function OperationsRiders() {
 
   useEffect(() => {
     const socket = getOperationsSocket();
-    const refresh = () => load();
-    const refreshSup = () => {
-      loadSupervisors();
+    const refresh = (payload) => {
+      const event = payload?.event;
+      // riders/supervisors mutations affect supervisor tab data too.
+      if (event === 'riders:changed' || event === 'supervisors:changed') {
+        loadSupervisors();
+      }
       load();
     };
     socket.on('operations:changed', refresh);
-    socket.on('challans:changed', refresh);
-    socket.on('riders:changed', refreshSup);
-    socket.on('supervisors:changed', refreshSup);
     return () => {
       socket.off('operations:changed', refresh);
-      socket.off('challans:changed', refresh);
-      socket.off('riders:changed', refreshSup);
-      socket.off('supervisors:changed', refreshSup);
     };
   }, [load, loadSupervisors]);
 
