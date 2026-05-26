@@ -33,19 +33,40 @@ import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardR
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
+
+function resolveSocketCorsOrigins() {
+  const raw = process.env.CLIENT_ORIGIN || process.env.CLIENT_URL || "*";
+  const list = String(raw)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!list.length || list.includes("*")) return "*";
+  return list;
+}
+
+// Socket.IO — real-time Operations updates (challans, riders, supervisors).
+// Clients auto-join room "operations"; server emits via emitOperationsChanged() in operationsRoutes.js.
+// Live: set CLIENT_URL to the frontend origin; if API is same-host, proxy /socket.io to this server.
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
+  path: "/socket.io",
   cors: {
-    origin: process.env.CLIENT_ORIGIN || "*",
-    methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+    origin: resolveSocketCorsOrigins(),
+    methods: ["GET", "POST"],
   },
 });
 
 io.on("connection", (socket) => {
   socket.join("operations");
+  log("SOCKET", "Client connected", { id: socket.id, room: "operations" });
 });
 
-app.use(cors());
+io.engine.on("connection_error", (err) => {
+  logError("SOCKET", "Engine connection error", err);
+});
+
+app.use(cors({ origin: resolveSocketCorsOrigins() }));
 app.use(express.json());
 
 const startServer = async () => {

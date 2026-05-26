@@ -1,30 +1,52 @@
 import { io } from 'socket.io-client';
-import { API_BASE } from '../config/api';
+import { getSocketBaseUrl } from '../config/api';
 
 let socket;
 
-function getSocketBaseUrl() {
-  const base = String(API_BASE || '').trim();
-  if (/^https?:\/\//i.test(base)) {
-    return base.replace(/\/api\/?$/i, '');
+function logSocketIssue(label, detail) {
+  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG_SOCKETS === 'true') {
+    console.warn(`[operations-socket] ${label}`, detail ?? '');
   }
-  // Vite dev: API_BASE is "/api" — connect via dev server (socket.io proxied in vite.config.js)
-  if (typeof window !== 'undefined') {
-    return window.location.origin;
-  }
-  return '';
 }
 
+// Singleton Socket.IO client — server config: server/index.js; dev proxy: vite.config.js (/socket.io).
 export function getOperationsSocket() {
   if (!socket) {
-    socket = io(getSocketBaseUrl(), {
+    const url = getSocketBaseUrl();
+    if (!url) {
+      logSocketIssue('No socket URL — set VITE_API_URL or VITE_SOCKET_URL for production');
+      return { on: () => {}, off: () => {}, disconnect: () => {} };
+    }
+
+    socket = io(url, {
       path: '/socket.io',
       transports: ['polling', 'websocket'],
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 2000,
-      timeout: 10000,
+      reconnectionDelayMax: 10000,
+      timeout: 20000,
       autoConnect: true,
+    });
+
+    socket.on('connect', () => {
+      logSocketIssue('connected', { id: socket.id, url });
+    });
+    let lastConnectErrorLog = 0;
+    socket.on('connect_error', (err) => {
+      const now = Date.now();
+      if (now - lastConnectErrorLog > 8000) {
+        lastConnectErrorLog = now;
+        console.warn(
+          '[operations-socket] connect_error:',
+          err?.message || err,
+          `(target: ${url})`
+        );
+      }
+      logSocketIssue('connect_error', { message: err?.message, url });
+    });
+    socket.on('disconnect', (reason) => {
+      logSocketIssue('disconnect', reason);
     });
   }
   return socket;

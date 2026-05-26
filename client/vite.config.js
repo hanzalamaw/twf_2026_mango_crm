@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // Socket.IO dev proxy → API server (pairs with server/index.js + operationsSocket.js)
         '/socket.io': {
           target: originFromApiUrl(env.VITE_API_URL),
           changeOrigin: true,
