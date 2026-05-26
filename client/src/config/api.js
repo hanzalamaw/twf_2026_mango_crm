@@ -5,7 +5,7 @@
  *
  * Production Socket.IO: set `VITE_API_URL` to the full API origin (e.g. `https://api.example.com/api`)
  * or set `VITE_SOCKET_URL` to the API host (e.g. `https://api.example.com`).
- * If both are relative (`/api`), the web server must proxy `/socket.io` to Node as well as `/api`.
+ * If both are relative (`/api`), Socket.IO uses path `/api/socket.io` (same proxy as REST).
  */
 const raw = import.meta.env.VITE_API_URL;
 const normalized = typeof raw === 'string' ? raw.trim().replace(/\/+$/, '') : '';
@@ -18,6 +18,11 @@ if (!apiBase) {
 }
 
 export const API_BASE = apiBase;
+
+/** Must match server SOCKET_IO_PATH (default /api/socket.io for same-host /api reverse proxy). */
+export const SOCKET_IO_PATH =
+  (typeof import.meta.env.VITE_SOCKET_PATH === 'string' && import.meta.env.VITE_SOCKET_PATH.trim()) ||
+  '/api/socket.io';
 
 /** Socket.IO server origin (no path). Used by operationsSocket.js. */
 export function getSocketBaseUrl() {

@@ -46,11 +46,11 @@ function resolveSocketCorsOrigins() {
 }
 
 // Socket.IO — real-time Operations updates (challans, riders, supervisors).
-// Clients auto-join room "operations"; server emits via emitOperationsChanged() in operationsRoutes.js.
-// Live: set CLIENT_URL to the frontend origin; if API is same-host, proxy /socket.io to this server.
+// Path defaults to /api/socket.io so it is proxied with /api on nginx/Apache (root /socket.io often serves SPA HTML).
+const SOCKET_IO_PATH = String(process.env.SOCKET_IO_PATH || "/api/socket.io").trim() || "/api/socket.io";
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, {
-  path: "/socket.io",
+  path: SOCKET_IO_PATH,
   cors: {
     origin: resolveSocketCorsOrigins(),
     methods: ["GET", "POST"],
@@ -439,7 +439,7 @@ const startServer = async () => {
 
     const PORT = process.env.PORT || 5000;
     httpServer.listen(PORT, () => {
-      log("SERVER", "Server started", { port: PORT });
+      log("SERVER", "Server started", { port: PORT, socketPath: SOCKET_IO_PATH });
       console.log(`Server running on http://localhost:${PORT}`);
       console.log('Auth: POST /api/login, POST /api/logout');
       console.log('  POST /api/register, POST /api/forgot-password, GET /api/reset-password/validate, POST /api/reset-password');

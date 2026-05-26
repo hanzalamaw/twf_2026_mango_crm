@@ -17,13 +17,8 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       proxy: {
+        // Includes /api/socket.io (Socket.IO path) — see server/index.js SOCKET_IO_PATH
         '/api': {
-          target: originFromApiUrl(env.VITE_API_URL),
-          changeOrigin: true,
-          secure: false,
-        },
-        // Socket.IO dev proxy → API server (pairs with server/index.js + operationsSocket.js)
-        '/socket.io': {
           target: originFromApiUrl(env.VITE_API_URL),
           changeOrigin: true,
           secure: false,
