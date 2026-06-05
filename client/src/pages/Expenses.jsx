@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import * as XLSX from 'xlsx';
-import { useLocation } from 'react-router-dom';
 import { API_BASE as API } from '../config/api';
 
 const EXPENSE_COLUMNS = [
@@ -63,12 +62,7 @@ export default function Expenses() {
   const PAGE_SIZE = 50;
   const { authFetch } = useAuth();
   const token = localStorage.getItem('token');
-  const location = useLocation();
-  const isFarm = location.pathname.startsWith('/farm');
-  const isProcurement = location.pathname.startsWith('/procurement');
-  const expenseBasePath = isProcurement
-    ? `${API}/procurement/expenses`
-    : (isFarm ? `${API}/farm/expenses` : `${API}/booking/expenses`);
+  const expenseBasePath = `${API}/booking/expenses`;
 
   const toggleSelect = (expenseId) => {
     setSelectedIds((prev) => {

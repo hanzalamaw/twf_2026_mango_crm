@@ -1,23 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { API_BASE as API } from '../config/api';
-
-const HIDDEN_TYPES_BOOKING = ['Cow', 'Fancy Cow', 'Goat'];
 
 const ORDER_COLUMNS = [
   { key: 'customer_id', label: 'Customer ID' },
   { key: 'order_id', label: 'Order ID' },
   { key: 'type', label: 'Type' },
-  { key: 'booking_name', label: 'Booking Name' },
-  { key: 'shareholder_name', label: 'Shareholder Name' },
+  { key: 'name', label: 'Name' },
   { key: 'phone_number', label: 'Phone' },
+  { key: 'batch', label: 'Batch' },
   { key: 'total_amount', label: 'Total Amount' },
   { key: 'bank', label: 'Bank' },
   { key: 'cash', label: 'Cash' },
   { key: 'received', label: 'Received' },
   { key: 'pending', label: 'Pending' },
-  { key: 'reference', label: 'Reference' },
   { key: 'payment_status', label: 'Status' },
 ];
 
@@ -124,47 +120,23 @@ export default function Transactions() {
   const searchInputRef = useRef(null);
 
   const token = localStorage.getItem('token');
-  const location = useLocation();
-  const isFarm = location.pathname.startsWith('/farm');
-  const isProcurement = location.pathname.startsWith('/procurement');
-  const activeColumns = isProcurement
-    ? [
-        { key: 'order_id', label: 'Procurement ID' },
-        { key: 'type', label: 'Type' },
-        { key: 'booking_date', label: 'Date' },
-        { key: 'total_amount', label: 'Total Amount' },
-        { key: 'bank', label: 'Bank' },
-        { key: 'cash', label: 'Cash' },
-        { key: 'received', label: 'Received' },
-        { key: 'pending', label: 'Pending' },
-        { key: 'payment_status', label: 'Status' },
-      ]
-    : ORDER_COLUMNS;
+  const activeColumns = ORDER_COLUMNS;
 
   const onHandAvailable = yearFilter === '2026';
   const effectiveFilterMode = !onHandAvailable ? 'actual' : (appliedTypes.length > 0 ? 'actual' : filterMode);
 
   const fetchFilters = useCallback(async () => {
     try {
-      const endpoint = isProcurement ? `${API}/procurement/filters` : `${API}/booking/orders/filters`;
-      const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const data = await res.json();
-        setFilters(isProcurement ? { order_types: data.types || [] } : data);
-      }
+      const res = await fetch(`${API}/booking/orders/filters?year=all`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setFilters(await res.json());
     } catch (e) {
       console.error(e);
     }
-  }, [token, isProcurement]);
+  }, [token]);
 
   const fetchSummary = useCallback(async () => {
     try {
-      const endpoint = isProcurement
-        ? `${API}/procurement/transactions`
-        : isFarm
-          ? `${API}/farm/transactions`
-          : `${API}/booking/transactions`;
-      const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/booking/transactions`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         setSummary(data.summary || null);
@@ -172,46 +144,18 @@ export default function Transactions() {
     } catch (e) {
       console.error(e);
     }
-  }, [token, isProcurement, isFarm]);
-
-  const BOOKING_SUMMARY_TYPES = ['Hissa - Premium', 'Hissa - Standard', 'Hissa - Waqf', 'Goat (Hissa)'];
+  }, [token]);
 
   const fetchOrdersSummary = useCallback(async () => {
     try {
-      if (isProcurement) {
-        const res = await fetch(`${API}/procurement/transactions`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.ok) {
-          const data = await res.json();
-          setOrdersSummary({
-            totalBank: Number(data?.summary?.totalBank ?? 0),
-            totalCash: Number(data?.summary?.totalCash ?? 0),
-          });
-        }
-        return;
-      }
-      if (isFarm) {
-        const res = await fetch(`${API}/farm/orders/summary`, { headers: { Authorization: `Bearer ${token}` } });
-        if (res.ok) {
-          const data = await res.json();
-          setOrdersSummary({
-            totalBank: Number(data?.totalBank ?? 0),
-            totalCash: Number(data?.totalCash ?? 0),
-          });
-        }
-        return;
-      }
       const params = new URLSearchParams();
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
-      BOOKING_SUMMARY_TYPES.forEach((t) => params.append('order_type', t));
       const res = await fetch(`${API}/booking/orders/summary?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) {
-        const data = await res.json();
-        setOrdersSummary(data);
-      }
+      if (res.ok) setOrdersSummary(await res.json());
     } catch (e) {
       console.error(e);
     }
-  }, [token, yearFilter, isFarm, isProcurement]);
+  }, [token, yearFilter]);
 
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -220,33 +164,20 @@ export default function Transactions() {
       const params = new URLSearchParams();
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
       appliedTypes.forEach((t) => params.append('order_type', t));
-      if (isFarm && appliedTypes.length === 0) {
-        params.append('order_type', 'Fancy Cow');
-        params.append('order_type', 'Goat');
-      }
-      if (isProcurement && appliedTypes.length > 0) params.set('type', appliedTypes[0]);
       params.set('page', String(page));
       params.set('limit', String(PAGE_SIZE));
-      if (isProcurement) params.delete('order_type');
 
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (paymentStatusFilter === 'pending' || paymentStatusFilter === 'received') {
         params.set('payment_status', paymentStatusFilter);
       }
-      if (!isProcurement && !isFarm) params.set('omit_hidden_types', '1');
 
-      const endpoint = isProcurement ? `${API}/procurement/transactions/list?${params.toString()}` : `${API}/booking/orders?${params.toString()}`;
-      const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/booking/orders?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data.data) ? data.data : [];
-        const filtered = list.filter((row) => {
-          if (isProcurement) return true;
-          if (isFarm) return ['Fancy Cow', 'Goat'].includes(row.type);
-          return !HIDDEN_TYPES_BOOKING.includes(row.type);
-        });
-        setOrders(filtered);
-        setTotalCount(typeof data.total === 'number' ? data.total : filtered.length);
+        setOrders(list);
+        setTotalCount(typeof data.total === 'number' ? data.total : list.length);
       } else {
         setError('Failed to load orders');
       }
@@ -255,7 +186,7 @@ export default function Transactions() {
     } finally {
       setLoading(false);
     }
-  }, [token, yearFilter, appliedTypes, page, isFarm, isProcurement, debouncedSearch, paymentStatusFilter]);
+  }, [token, yearFilter, appliedTypes, page, debouncedSearch, paymentStatusFilter]);
 
   useEffect(() => { fetchFilters(); }, [fetchFilters]);
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
@@ -307,17 +238,10 @@ export default function Transactions() {
       const params = new URLSearchParams();
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
       appliedTypes.forEach((t) => params.append('order_type', t));
-      if (isFarm && appliedTypes.length === 0) {
-        params.append('order_type', 'Fancy Cow');
-        params.append('order_type', 'Goat');
-      }
-      if (isProcurement && appliedTypes.length > 0) params.set('type', appliedTypes[0]);
       if (debouncedSearch) params.set('search', debouncedSearch);
       if (paymentStatusFilter === 'pending' || paymentStatusFilter === 'received') {
         params.set('payment_status', paymentStatusFilter);
       }
-      if (!isProcurement && !isFarm) params.set('omit_hidden_types', '1');
-      if (isProcurement) params.delete('order_type');
 
       const limit = 200;
       let p = 1;
@@ -326,10 +250,7 @@ export default function Transactions() {
       do {
         params.set('page', String(p));
         params.set('limit', String(limit));
-        const endpoint = isProcurement
-          ? `${API}/procurement/transactions/list?${params.toString()}`
-          : `${API}/booking/orders?${params.toString()}`;
-        const res = await fetch(endpoint, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch(`${API}/booking/orders?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) {
           alert('Failed to load data for export');
           return;
@@ -342,12 +263,7 @@ export default function Transactions() {
         p += 1;
       } while (true);
 
-      const filtered = all.filter((row) => {
-        if (isProcurement) return true;
-        if (isFarm) return ['Fancy Cow', 'Goat'].includes(row.type);
-        return !HIDDEN_TYPES_BOOKING.includes(row.type);
-      });
-      const toExport = ids.length > 0 ? filtered.filter((r) => ids.includes(r.order_id)) : filtered;
+      const toExport = ids.length > 0 ? all.filter((r) => ids.includes(r.order_id)) : all;
       if (!toExport.length) {
         alert('No data to export');
         return;
@@ -371,9 +287,9 @@ export default function Transactions() {
       );
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, isProcurement ? 'Procurement' : 'Transactions');
+      XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
       XLSX.writeFile(wb, `transactions-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
-    } catch (e) {
+    } catch {
       alert('Export failed');
     }
   };
@@ -418,10 +334,7 @@ export default function Transactions() {
     if (bank === 0 && cash === 0) return;
     setSubmitting(true);
     try {
-      const endpoint = isProcurement
-        ? `${API}/procurement/${encodeURIComponent(modalOrder.order_id)}/payments`
-        : `${API}/booking/orders/${encodeURIComponent(modalOrder.order_id)}/payments`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${API}/booking/orders/${encodeURIComponent(modalOrder.order_id)}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ bank, cash }),
@@ -446,7 +359,7 @@ export default function Transactions() {
   if (loading && orders.length === 0) {
     return (
       <div style={{ padding: '19px', fontFamily: "'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif" }}>
-        <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '16px' }}>{isProcurement ? 'Procurement Transactions' : 'Transactions'}</h2>
+        <h2 style={{ margin: 0, fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '16px' }}>Transactions</h2>
         <div style={{ padding: '32px', textAlign: 'center', color: '#666', fontSize: '11px' }}>Loading...</div>
       </div>
     );
@@ -456,7 +369,7 @@ export default function Transactions() {
     filters.order_types && filters.order_types.length > 0
       ? filters.order_types
       : [...new Set(orders.map((o) => o.type).filter(Boolean))].sort()
-  ).filter((t) => (isProcurement ? true : (isFarm ? ['Fancy Cow', 'Goat'].includes(t) : !HIDDEN_TYPES_BOOKING.includes(t))));
+  );
 
   const s = summary || {};
   const totalExpensesBank = Number(s.totalExpensesBank) ?? 0;
@@ -560,7 +473,7 @@ export default function Transactions() {
 
       {/* ── Top bar ── */}
       <div className="txn-topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexShrink: 0, flexWrap: 'nowrap', gap: '10px' }}>
-        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#333', flexShrink: 0 }}>{isProcurement ? 'Procurement Transactions' : 'Transactions'}</h2>
+        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#333', flexShrink: 0 }}>Transactions</h2>
         <div className="txn-topbar-controls" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap', marginLeft: 'auto' }} ref={typeDropdownRef}>
 
           {/* Year filter */}
@@ -1021,7 +934,7 @@ export default function Transactions() {
             <div className="txn-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', marginBottom: '13px', fontSize: '10px', padding: '8px 10px', background: '#f5f5f5', borderRadius: '6px', border: '1px solid #e8e8e8' }}>
               <div><span style={{ color: '#666' }}>Customer ID</span><div style={{ fontWeight: '600' }}>{modalOrder.customer_id ?? '—'}</div></div>
               <div><span style={{ color: '#666' }}>Order ID</span><div style={{ fontWeight: '600' }}>{modalOrder.order_id ?? '—'}</div></div>
-              <div><span style={{ color: '#666' }}>Name</span><div style={{ fontWeight: '600' }}>{modalOrder.shareholder_name ?? modalOrder.booking_name ?? '—'}</div></div>
+              <div><span style={{ color: '#666' }}>Name</span><div style={{ fontWeight: '600' }}>{modalOrder.name ?? '—'}</div></div>
               <div><span style={{ color: '#666' }}>Contact</span><div style={{ fontWeight: '600' }}>{modalOrder.phone_number ?? '—'}</div></div>
               <div><span style={{ color: '#666' }}>Booking Date</span><div style={{ fontWeight: '600' }}>{formatDate(modalOrder.booking_date)}</div></div>
               <div><span style={{ color: '#666' }}>Total Price</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.total_amount)}</div></div>

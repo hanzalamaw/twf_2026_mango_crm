@@ -27,39 +27,9 @@ const OPTIONS = [
     path: '/bookings',
     permission: 'booking_management',
     emoji: '📋',
-    desc: 'Manage orders & queries',
+    desc: 'Manage mango orders',
     accent: '#E65100',
     soft: '#FFF3E0',
-  },
-  {
-    id: 'operations',
-    name: 'Operations Management',
-    path: '/operations',
-    permission: 'operation_management',
-    emoji: '📡',
-    desc: 'Live ops & monitoring',
-    accent: '#BF360C',
-    soft: '#FBE9E7',
-  },
-  {
-    id: 'farm',
-    name: 'Farm Management',
-    path: '/farm',
-    permission: 'farm_management',
-    emoji: '🌾',
-    desc: 'Livestock & farm data',
-    accent: '#558B2F',
-    soft: '#F1F8E9',
-  },
-  {
-    id: 'procurement',
-    name: 'Procurement Management',
-    path: '/procurement',
-    permission: 'procurement_management',
-    emoji: '📦',
-    desc: 'Supply chain & vendors',
-    accent: '#1565C0',
-    soft: '#E3F2FD',
   },
   {
     id: 'accounting',
@@ -137,13 +107,7 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
   const permissions = user?.permissions || {};
   const hasAccess = (perm) => !!permissions[perm];
 
-  const hasOperationsEntry = (p) =>
-    !!(p.operation_management || p.operation_rider_management || p.operation_rider_management_supervisor);
-
-  const isOptionAccessible = (option) => {
-    if (option.id === 'operations') return hasOperationsEntry(permissions);
-    return hasAccess(option.permission);
-  };
+  const isOptionAccessible = (option) => hasAccess(option.permission);
 
   const handleClick = (option) => {
     if (!isOptionAccessible(option)) {
@@ -475,7 +439,7 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
           <div className="mob-hero" style={{ opacity: mounted ? 1 : 0, transition: 'opacity 0.4s ease' }}>
             <div className="mob-hero-top">
               <div className="mob-hero-left">
-                <p className="mob-brand">TWF Cattle CRM</p>
+                <p className="mob-brand">TWF Mango CRM</p>
                 <h1 className="mob-title">Select Management</h1>
                 <p className="mob-subtitle">{accessibleCount} of {OPTIONS.length} systems available</p>
               </div>
@@ -603,7 +567,7 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <div>
-                <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Cattle CRM</p>
+                <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Mango CRM</p>
                 <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#333', margin: 0 }}>Select Management</h1>
               </div>
               <button type="button" onClick={logout} style={{
@@ -627,16 +591,7 @@ const SubSystemSelection = ({ forceMobileLayout = false } = {}) => {
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                {OPTIONS.slice(0, 4).map((option) => (
-                  <button key={option.id} type="button" onClick={() => handleClick(option)} style={btnStyle}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#FFEDE6'; e.currentTarget.style.borderColor = '#FFE0D6'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = '#FAFAFA'; e.currentTarget.style.borderColor = '#F0F0F0'; }}>
-                    {option.name}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                {OPTIONS.slice(4, 7).map((option) => (
+                {OPTIONS.map((option) => (
                   <button key={option.id} type="button" onClick={() => handleClick(option)} style={btnStyle}
                     onMouseEnter={(e) => { e.currentTarget.style.background = '#FFEDE6'; e.currentTarget.style.borderColor = '#FFE0D6'; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = '#FAFAFA'; e.currentTarget.style.borderColor = '#F0F0F0'; }}>

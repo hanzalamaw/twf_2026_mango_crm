@@ -1,39 +1,55 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { API_BASE as API } from '../config/api';
 import { useAuth } from '../context/AuthContext';
+
 const PAGE_SIZE = 50;
-const HIDDEN_TYPES_BOOKING = ['Cow', 'Fancy Cow', 'Goat'];
+
+const DELIVERY_STATUS_OPTIONS = ['Pending', 'Dispatched', 'Delivered', 'Cancelled'];
 
 const COLUMNS = [
-  { key: 'customer_id',    label: 'Customer ID'    },
-  { key: 'order_id',       label: 'Order ID'       },
-  { key: 'cow',            label: 'Cow'            },
-  { key: 'hissa',          label: 'Hissa'          },
-  { key: 'slot',           label: 'Slot'           },
-  { key: 'booking_name',   label: 'Booking Name'   },
-  { key: 'shareholder_name', label: 'Shareholder Name' },
-  { key: 'phone_number',   label: 'Phone Number'   },
-  { key: 'alt_phone',      label: 'Alt. Phone'     },
-  { key: 'address',        label: 'Address'        },
-  { key: 'area',           label: 'Area'           },
-  { key: 'day',            label: 'Day'            },
-  { key: 'type',           label: 'Type'           },
-  { key: 'booking_date',   label: 'Booking Date'   },
-  { key: 'total_amount',   label: 'Total Amount'   },
-  { key: 'bank',           label: 'Bank'           },
-  { key: 'cash',           label: 'Cash'           },
-  { key: 'received',       label: 'Received'       },
-  { key: 'pending',        label: 'Pending'        },
-  { key: 'source',         label: 'Source'         },
-  { key: 'reference',      label: 'Reference'      },
-  { key: 'closed_by',      label: 'Closed By'      },
-  { key: 'description',    label: 'Description'    },
-  { key: 'payment_status', label: 'Payment Status' },
+  { key: 'customer_id',     label: 'Customer ID'     },
+  { key: 'order_id',        label: 'Order ID'        },
+  { key: 'name',            label: 'Name'            },
+  { key: 'phone_number',    label: 'Contact'         },
+  { key: 'type',            label: 'Type'            },
+  { key: 'address',         label: 'Address'         },
+  { key: 'area',            label: 'Area'            },
+  { key: 'weight',          label: 'Weight'          },
+  { key: 'quantity',        label: 'Quantity'        },
+  { key: 'batch',           label: 'Batch'           },
+  { key: 'booking_date',    label: 'Booking Date'    },
+  { key: 'total_amount',    label: 'Total Amount'    },
+  { key: 'bank',            label: 'Bank'            },
+  { key: 'cash',            label: 'Cash'            },
+  { key: 'received',        label: 'Received'        },
+  { key: 'pending',         label: 'Pending'         },
+  { key: 'source',          label: 'Source'          },
+  { key: 'description',     label: 'Description'     },
+  { key: 'delivery_status', label: 'Delivery Status' },
+  { key: 'payment_status',  label: 'Payment Status'  },
 ];
 
 const AMOUNT_KEYS = ['total_amount', 'bank', 'cash', 'received', 'pending'];
+
+const EDIT_LABELS = {
+  order_id: 'Order ID',
+  customer_id: 'Customer ID',
+  name: 'Name',
+  phone_number: 'Contact',
+  address: 'Address',
+  area: 'Area',
+  type: 'Type',
+  weight: 'Weight',
+  quantity: 'Quantity',
+  batch: 'Batch',
+  booking_date: 'Booking Date',
+  total_amount: 'Total Amount',
+  received: 'Received',
+  pending: 'Pending',
+  source: 'Source',
+  delivery_status: 'Delivery Status',
+};
 
 function formatAmount(val) {
   if (val == null || val === '') return '—';
@@ -59,20 +75,23 @@ function StatusPill({ status }) {
         ? { color: '#C30730', background: '#FBEDF0', borderColor: '#C30730' }
         : { color: '#07C339', background: '#E6F9EB', borderColor: '#07C339' }),
     }}>
-      {isPending ? 'Pending' : (status ? 'Received' : '—')}
+      {isPending ? 'Pending' : (status === 'Paid' ? 'Paid' : (status || '—'))}
     </span>
   );
 }
 
 const defaultEditRow = () => ({
-  order_id: '', customer_id: '', cow: '', hissa: '', slot: '',
-  booking_name: '', shareholder_name: '', phone_number: '', alt_phone: '',
-  address: '', area: '', day: '', type: '', booking_date: '',
-  total_amount: '', received: '', pending: '', source: '', reference: '', closed_by: '', description: '',
+  order_id: '', customer_id: '', name: '', phone_number: '',
+  address: '', area: '', type: '', weight: '', quantity: '', batch: '',
+  booking_date: '', total_amount: '', received: '', pending: '',
+  source: '', delivery_status: 'Pending', description: '',
 });
 
-const EDIT_FIELD_KEYS_BOOKING = ['order_id', 'customer_id', 'cow', 'hissa', 'slot', 'booking_name', 'shareholder_name', 'phone_number', 'alt_phone', 'address', 'area', 'day', 'type', 'booking_date', 'total_amount', 'received', 'pending', 'source', 'reference', 'closed_by'];
-const EDIT_FIELD_KEYS_FARM = ['order_id', 'customer_id', 'slot', 'booking_name', 'shareholder_name', 'phone_number', 'alt_phone', 'address', 'area', 'day', 'type', 'booking_date', 'total_amount', 'received', 'pending', 'source', 'reference', 'closed_by'];
+const EDIT_FIELD_KEYS = [
+  'order_id', 'customer_id', 'name', 'phone_number',
+  'address', 'area', 'type', 'weight', 'quantity', 'batch',
+  'booking_date', 'total_amount', 'received', 'pending', 'source',
+];
 
 function validateAmountsRealtime(row) {
   const errors = {};
@@ -89,9 +108,8 @@ function validateAmountsRealtime(row) {
 function validateOrderEdit(row) {
   const errors = {};
   const trim = (v) => (v == null ? '' : String(v).trim());
-  if (!trim(row.customer_id))     errors.customer_id     = 'Customer ID is required';
-  if (!trim(row.booking_name))    errors.booking_name    = 'Booking name is required';
-  if (!trim(row.shareholder_name)) errors.shareholder_name = 'Shareholder name is required';
+  if (!trim(row.customer_id)) errors.customer_id = 'Customer ID is required';
+  if (!trim(row.name)) errors.name = 'Name is required';
   const phone = trim(row.phone_number);
   if (!phone) errors.phone_number = 'Phone number is required';
   else if (!/^[\d\s\-+()]{7,20}$/.test(phone)) errors.phone_number = 'Enter a valid phone number (7–20 digits/symbols)';
@@ -100,208 +118,280 @@ function validateOrderEdit(row) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) errors.booking_date = 'Date must be YYYY-MM-DD';
     else if (Number.isNaN(new Date(dateStr).getTime())) errors.booking_date = 'Invalid date';
   }
-  const total    = Number(trim(row.total_amount));
+  const total = Number(trim(row.total_amount));
   const received = Number(trim(row.received));
-  const pending  = Number(trim(row.pending));
-  if (trim(row.total_amount) !== '' && (Number.isNaN(total)    || total    < 0)) errors.total_amount = 'Total must be a number ≥ 0';
-  if (trim(row.received)     !== '' && (Number.isNaN(received) || received < 0)) errors.received     = 'Received must be a number ≥ 0';
-  if (trim(row.pending)      !== '' && (Number.isNaN(pending)  || pending  < 0)) errors.pending      = 'Pending must be a number ≥ 0';
+  const pending = Number(trim(row.pending));
+  if (trim(row.total_amount) !== '' && (Number.isNaN(total) || total < 0)) errors.total_amount = 'Total must be a number ≥ 0';
+  if (trim(row.received) !== '' && (Number.isNaN(received) || received < 0)) errors.received = 'Received must be a number ≥ 0';
+  if (trim(row.pending) !== '' && (Number.isNaN(pending) || pending < 0)) errors.pending = 'Pending must be a number ≥ 0';
   if (!Number.isNaN(total) && !Number.isNaN(received) && total < received) errors.total_amount = 'Total amount cannot be less than received amount';
   return errors;
 }
 
 export default function OrderManagement() {
-  const [orders,      setOrders]      = useState([]);
-  const [filters,     setFilters]     = useState({ slots: [], order_types: [], days: [], references: [] });
-  const [search,      setSearch]      = useState('');
-  const [slot,        setSlot]        = useState('');
-  const [orderType,   setOrderType]   = useState('');
-  const [day,         setDay]         = useState('');
-  const [reference,   setReference]   = useState('');
-  const [cowNumber,   setCowNumber]   = useState('');
-  const [yearFilter,  setYearFilter]  = useState('2026');
-  const [loading,     setLoading]     = useState(true);
-  const [error,       setError]       = useState('');
+  const [orders, setOrders] = useState([]);
+  const [filters, setFilters] = useState({ batches: [], order_types: [] });
+  const [search, setSearch] = useState('');
+  const [batch, setBatch] = useState('');
+  const [orderType, setOrderType] = useState('');
+  const [yearFilter, setYearFilter] = useState('2026');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [editOpen,    setEditOpen]    = useState(false);
-  const [editRow,     setEditRow]     = useState(defaultEditRow);
-  const [editPreviousRow, setEditPreviousRow] = useState(null);
-  const [editErrors,  setEditErrors]  = useState({});
-  const [saving,      setSaving]      = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRow, setEditRow] = useState(defaultEditRow);
+  const [editErrors, setEditErrors] = useState({});
+  const [saving, setSaving] = useState(false);
   const [cancelConfirm, setCancelConfirm] = useState(null);
-  const [page,        setPage]        = useState(1);
-  const [totalCount,  setTotalCount]  = useState(0);
-  const [mobileFiltersOpen,  setMobileFiltersOpen]  = useState(false);
-  const [editDuplicateError, setEditDuplicateError] = useState(null);
-  const editDuplicateCheckTimeoutRef = useRef(null);
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [paymentOrder, setPaymentOrder] = useState(null);
+  const [addBank, setAddBank] = useState('');
+  const [addCash, setAddCash] = useState('');
+  const [paymentErrors, setPaymentErrors] = useState({});
+  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const { authFetch } = useAuth();
-  const token = localStorage.getItem('token');
-  const location = useLocation();
-  const isFarm = location.pathname.startsWith('/farm');
-  // Farm view must show DB order_type 'Cow' and 'Fancy Cow' as 'Fancy Cow', plus exact 'Goat'.
-  // Backend expands Fancy Cow to include legacy Cow only when farm_order_management=1.
-  const FARM_ORDER_TYPES = ['Fancy Cow', 'Goat'];
-  const visibleOrderTypes = (filters.order_types || []).filter((t) => (
-    isFarm ? FARM_ORDER_TYPES.includes(t) : !HIDDEN_TYPES_BOOKING.includes(t)
-  ));
-  const applyFarmOrderScope = (params) => {
-    if (!isFarm) return;
-    params.set('farm_order_management', '1');
-    if (orderType) {
-      params.set('order_type', orderType);
-      return;
-    }
-    FARM_ORDER_TYPES.forEach((type) => params.append('order_type', type));
-  };
   const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
 
-  /* ── fetch ── */
   const fetchFilters = useCallback(async () => {
     try {
       const params = new URLSearchParams();
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
       const url = `${API}/booking/orders/filters${params.toString() ? `?${params}` : ''}`;
       const res = await authFetch(url);
-      if (res.ok) { const data = await res.json(); setFilters(data); }
-    } catch (e) { console.error(e); }
-  }, [authFetch, yearFilter, isFarm]);
+      if (res.ok) {
+        const data = await res.json();
+        setFilters(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [authFetch, yearFilter]);
 
   const fetchOrders = useCallback(async () => {
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
     try {
       const params = new URLSearchParams();
-      if (search.trim())      params.set('search',     search.trim());
-      if (!isFarm) {
-        if (slot)             params.set('slot',        slot);
-        if (day)              params.set('day',         day);
-        if (cowNumber.trim()) params.set('cow_number',  cowNumber.trim());
-      }
-      if (isFarm) {
-        applyFarmOrderScope(params);
-      } else {
-        if (orderType)        params.set('order_type',  orderType);
-        params.set('omit_hidden_types', '1');
-      }
-      if (reference)          params.set('reference',   reference);
+      if (search.trim()) params.set('search', search.trim());
+      if (orderType) params.set('order_type', orderType);
+      if (batch) params.set('batch', batch);
       if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
-      params.set('page',  String(page));
+      params.set('page', String(page));
       params.set('limit', String(PAGE_SIZE));
       const res = await authFetch(`${API}/booking/orders?${params}`);
       if (res.ok) {
-        const json  = await res.json();
-        const data  = Array.isArray(json) ? json : json.data;
+        const json = await res.json();
+        const data = Array.isArray(json) ? json : json.data;
         const total = typeof json.total === 'number' ? json.total : (data?.length ?? 0);
-        const filtered = (Array.isArray(data) ? data : []).filter((r) => {
-          if (isFarm) {
-            return FARM_ORDER_TYPES.includes(r.type);
-          }
-          return !HIDDEN_TYPES_BOOKING.includes(r.type);
-        });
-        setOrders(filtered);
+        setOrders(Array.isArray(data) ? data : []);
         setTotalCount(total);
-      } else { setError('Failed to load orders'); }
-    } catch (e) { setError('Failed to load orders'); }
-    finally { setLoading(false); }
-  }, [authFetch, token, search, slot, orderType, day, reference, cowNumber, yearFilter, page, isFarm]);
+      } else {
+        setError('Failed to load orders');
+      }
+    } catch (e) {
+      setError('Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  }, [authFetch, search, orderType, batch, yearFilter, page]);
 
   useEffect(() => { fetchFilters(); }, [fetchFilters]);
-  useEffect(() => { setPage(1); }, [search, slot, orderType, day, reference, cowNumber, yearFilter]);
+  useEffect(() => { setPage(1); }, [search, orderType, batch, yearFilter]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  const GOAT_NUMBER_PATTERN = /^G[1-9]\d*$/;
-  const shouldSkipCowHissaDup = (type, c) => {
-    if (type !== 'Goat (Hissa)') return false;
-    const cv = String(c ?? '').trim().toUpperCase();
-    return !GOAT_NUMBER_PATTERN.test(cv);
-  };
-
-  const checkCowHissaDuplicate = useCallback(async (c, h, type, d, bd, excludeId) => {
-    if (!c || !h || !type || !token || shouldSkipCowHissaDup(type, c)) return null;
-    try {
-      const cowNorm = type === 'Goat (Hissa)' ? String(c).trim().toUpperCase() : String(c).trim();
-      const hissaNorm = type === 'Goat (Hissa)' ? '0' : String(h).trim();
-      const res = await authFetch(`${API}/booking/check-cow-hissa`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cow_number: cowNorm, hissa_number: hissaNorm, order_type: type, day: d || null, booking_date: bd || null }),
-      });
-      if (res.ok) { const d2 = await res.json(); if (d2.exists && d2.order_id !== excludeId) return d2; }
-    } catch (e) { console.error(e); }
-    return null;
-  }, [authFetch, token]);
-
-  useEffect(() => {
-    if (!editOpen || isFarm) return;
-    const { cow, hissa, type, day: d, booking_date: bd, order_id } = editRow || {};
-    if (!(cow || '').trim() || !type || shouldSkipCowHissaDup(type, cow)) { setEditDuplicateError(null); return; }
-    if (editDuplicateCheckTimeoutRef.current) clearTimeout(editDuplicateCheckTimeoutRef.current);
-    editDuplicateCheckTimeoutRef.current = setTimeout(async () => {
-      const dup = await checkCowHissaDuplicate(String(cow).trim(), String(hissa ?? '').trim(), type, d, bd, order_id);
-      setEditDuplicateError(dup || null);
-      editDuplicateCheckTimeoutRef.current = null;
-    }, 400);
-    return () => { if (editDuplicateCheckTimeoutRef.current) clearTimeout(editDuplicateCheckTimeoutRef.current); };
-  }, [editRow?.cow, editRow?.hissa, editRow?.type, editRow?.day, editRow?.booking_date, editOpen, isFarm, checkCowHissaDuplicate]);
-
-  /* ── handlers ── */
-  const toggleSelect    = (id)  => setSelectedIds((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleSelectAll = ()    => selectedIds.size === orders.length ? setSelectedIds(new Set()) : setSelectedIds(new Set(orders.map((r) => r.order_id)));
+  const toggleSelect = (id) => setSelectedIds((p) => {
+    const n = new Set(p);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  });
+  const toggleSelectAll = () => (
+    selectedIds.size === orders.length
+      ? setSelectedIds(new Set())
+      : setSelectedIds(new Set(orders.map((r) => r.order_id)))
+  );
 
   const handleEdit = (row) => {
     const init = {
-      order_id: row.order_id, customer_id: row.customer_id ?? '',
-      ...(isFarm ? {} : { cow: row.cow ?? '', hissa: row.hissa ?? '' }),
-      slot: row.slot ?? '', booking_name: row.booking_name ?? '', shareholder_name: row.shareholder_name ?? '',
-      phone_number: row.phone_number ?? '', alt_phone: row.alt_phone ?? '', address: row.address ?? '',
-      area: row.area ?? '', day: row.day ?? '', type: row.type ?? '', booking_date: formatDate(row.booking_date),
-      total_amount: row.total_amount ?? '', received: row.received ?? '', pending: row.pending ?? '',
-      source: row.source ?? '', reference: row.reference ?? '', closed_by: row.closed_by ?? '', description: row.description ?? '',
+      order_id: row.order_id,
+      customer_id: row.customer_id ?? '',
+      name: row.name ?? '',
+      phone_number: row.phone_number ?? '',
+      address: row.address ?? '',
+      area: row.area ?? '',
+      type: row.type ?? '',
+      weight: row.weight ?? '',
+      quantity: row.quantity ?? '',
+      batch: row.batch ?? '',
+      booking_date: formatDate(row.booking_date),
+      total_amount: row.total_amount ?? '',
+      received: row.received ?? '',
+      pending: row.pending ?? '',
+      source: row.source ?? '',
+      delivery_status: row.delivery_status ?? 'Pending',
+      description: row.description ?? '',
     };
-    setEditPreviousRow(init); setEditRow({ ...defaultEditRow(), ...init }); setEditErrors({}); setEditDuplicateError(null); setEditOpen(true);
+    setEditRow({ ...defaultEditRow(), ...init });
+    setEditErrors({});
+    setEditOpen(true);
   };
 
   const handleSaveEdit = async () => {
     const errors = validateOrderEdit(editRow);
-    if (Object.keys(errors).length > 0) { setEditErrors(errors); return; }
-    if (!isFarm && editDuplicateError) return;
-    setEditErrors({}); setSaving(true);
+    if (Object.keys(errors).length > 0) {
+      setEditErrors(errors);
+      return;
+    }
+    setEditErrors({});
+    setSaving(true);
     try {
-      const payload = isFarm ? { ...editRow, cow: '0', hissa: '0' } : { ...editRow };
+      const payload = { ...editRow };
       if (payload.booking_date) {
         const s = String(payload.booking_date);
         payload.booking_date = s.includes('T') ? s.split('T')[0] : (s.match(/^\d{4}-\d{2}-\d{2}/)?.[0] || s);
       }
       const res = await authFetch(`${API}/booking/orders/${encodeURIComponent(editRow.order_id)}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) { setEditOpen(false); setEditPreviousRow(null); fetchOrders(); }
-      else { const data = await res.json().catch(() => ({})); alert(data.message || 'Failed to update order'); }
-    } finally { setSaving(false); }
+      if (res.ok) {
+        setEditOpen(false);
+        fetchOrders();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.message || 'Failed to update order');
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleInvoice = async (customerId) => {
     try {
       const res = await authFetch(`${API}/booking/invoice/${encodeURIComponent(customerId)}`);
-      if (!res.ok) { const data = await res.json().catch(() => ({})); alert(data.message || 'Failed to generate invoice'); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.message || 'Failed to generate invoice');
+        return;
+      }
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url; a.download = `Invoice-${customerId}.pdf`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    } catch (e) { alert('Failed to generate invoice'); }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice-${customerId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Failed to generate invoice');
+    }
   };
 
   const handleCancelConfirm = async () => {
     if (!cancelConfirm) return;
     try {
       const res = await authFetch(`${API}/booking/orders/${encodeURIComponent(cancelConfirm.order_id)}/cancel`, { method: 'POST' });
-      if (res.ok) { setCancelConfirm(null); fetchOrders(); setSelectedIds((p) => { const n = new Set(p); n.delete(cancelConfirm.order_id); return n; }); }
-      else { const data = await res.json().catch(() => ({})); alert(data.message || 'Failed to cancel order'); }
-    } finally { setCancelConfirm(null); }
+      if (res.ok) {
+        setCancelConfirm(null);
+        fetchOrders();
+        setSelectedIds((p) => {
+          const n = new Set(p);
+          n.delete(cancelConfirm.order_id);
+          return n;
+        });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.message || 'Failed to cancel order');
+      }
+    } finally {
+      setCancelConfirm(null);
+    }
   };
 
-  const handleResetFilters = () => { setSearch(''); setSlot(''); setOrderType(''); setDay(''); setReference(''); setCowNumber(''); setYearFilter('2026'); setSelectedIds(new Set()); setError(''); };
+  const handleResetFilters = () => {
+    setSearch('');
+    setBatch('');
+    setOrderType('');
+    setYearFilter('2026');
+    setSelectedIds(new Set());
+    setError('');
+  };
+
+  const openPaymentModal = (order) => {
+    setPaymentOrder(order);
+    setAddBank('');
+    setAddCash('');
+    setPaymentErrors({});
+  };
+
+  const getPaymentRealtimeError = () => {
+    if (!paymentOrder) return null;
+    const bankVal = parseFloat(addBank);
+    const cashVal = parseFloat(addCash);
+    if (!Number.isNaN(bankVal) && bankVal < 0) return 'Amount cannot be negative.';
+    if (!Number.isNaN(cashVal) && cashVal < 0) return 'Amount cannot be negative.';
+    const pendingAmount = Number(paymentOrder.pending) || 0;
+    const addB = Math.max(0, Number.isNaN(bankVal) ? 0 : bankVal);
+    const addC = Math.max(0, Number.isNaN(cashVal) ? 0 : cashVal);
+    if (addB + addC > pendingAmount) return `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    return null;
+  };
+
+  const validatePayment = () => {
+    const err = {};
+    const bank = parseFloat(addBank);
+    const cash = parseFloat(addCash);
+    const addB = Math.max(0, Number.isNaN(bank) ? 0 : bank);
+    const addC = Math.max(0, Number.isNaN(cash) ? 0 : cash);
+    if (!Number.isNaN(bank) && bank < 0) err.addBank = 'Amount cannot be negative.';
+    if (!Number.isNaN(cash) && cash < 0) err.addCash = 'Amount cannot be negative.';
+    if (addB + addC === 0) err.add = 'Enter at least one amount (Add Bank or Add Cash ≥ 0).';
+    const totalAmountVal = Number(paymentOrder?.total_amount) || 0;
+    const currentReceivedVal = Number(paymentOrder?.received) || 0;
+    if (currentReceivedVal + addB + addC > totalAmountVal) {
+      err.add = err.add || `Total received cannot exceed total amount (${formatAmount(totalAmountVal)}).`;
+    }
+    const pendingAmount = Number(paymentOrder?.pending) || 0;
+    if (addB + addC > pendingAmount) {
+      err.add = err.add || `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    }
+    setPaymentErrors(err);
+    return Object.keys(err).length === 0;
+  };
+
+  const handleSubmitPayment = async () => {
+    if (!paymentOrder) return;
+    if (!validatePayment()) return;
+    const bank = Math.max(0, parseFloat(addBank) || 0);
+    const cash = Math.max(0, parseFloat(addCash) || 0);
+    if (bank === 0 && cash === 0) return;
+    setSubmittingPayment(true);
+    try {
+      const res = await authFetch(`${API}/booking/orders/${encodeURIComponent(paymentOrder.order_id)}/payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bank, cash }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setPaymentOrder(null);
+        setAddBank('');
+        setAddCash('');
+        fetchOrders();
+      } else {
+        alert(data.message || 'Failed to add payment');
+      }
+    } catch (e) {
+      alert('Failed to add payment');
+    } finally {
+      setSubmittingPayment(false);
+    }
+  };
 
   const handleExport = async () => {
     try {
@@ -312,66 +402,89 @@ export default function OrderManagement() {
       do {
         const params = new URLSearchParams();
         if (search?.trim()) params.set('search', search.trim());
-        if (!isFarm) {
-          if (slot) params.set('slot', slot);
-          if (day) params.set('day', day);
-          if (cowNumber?.trim()) params.set('cow_number', cowNumber.trim());
-        }
-        if (isFarm) {
-          applyFarmOrderScope(params);
-        } else {
-          if (orderType) params.set('order_type', orderType);
-          params.set('omit_hidden_types', '1');
-        }
-        if (reference) params.set('reference', reference);
+        if (orderType) params.set('order_type', orderType);
+        if (batch) params.set('batch', batch);
         if (yearFilter && yearFilter !== 'all') params.set('year', yearFilter);
         params.set('page', String(pageNum));
         params.set('limit', String(limit));
         const res = await authFetch(`${API}/booking/orders?${params}`);
-        if (!res.ok) { alert('Failed to load data for export'); return; }
+        if (!res.ok) {
+          alert('Failed to load data for export');
+          return;
+        }
         const json = await res.json();
         const data = Array.isArray(json) ? json : json.data;
-        const rawChunk = Array.isArray(data) ? data : [];
-        const chunk = rawChunk.filter((r) =>
-          isFarm ? FARM_ORDER_TYPES.includes(r.type) : !HIDDEN_TYPES_BOOKING.includes(r.type)
-        );
+        const chunk = Array.isArray(data) ? data : [];
         allOrders = allOrders.concat(chunk);
-        if (rawChunk.length < limit) break;
+        if (chunk.length < limit) break;
         pageNum++;
       } while (true);
       const toExport = ids.length > 0 ? allOrders.filter((r) => ids.includes(r.order_id)) : allOrders;
-      if (!toExport.length) { alert('No data to export'); return; }
+      if (!toExport.length) {
+        alert('No data to export');
+        return;
+      }
       const headers = COLUMNS.map((c) => c.label);
-      const rows    = toExport.map((row) => COLUMNS.map((col) => {
+      const rows = toExport.map((row) => COLUMNS.map((col) => {
         const val = row[col.key];
-        if (AMOUNT_KEYS.includes(col.key)) { const n = Number(val); return Number.isFinite(n) ? n : (val ?? ''); }
-        if (col.key === 'booking_date')    return formatDate(val);
-        if (col.key === 'payment_status')  return val || '—';
+        if (AMOUNT_KEYS.includes(col.key)) {
+          const n = Number(val);
+          return Number.isFinite(n) ? n : (val ?? '');
+        }
+        if (col.key === 'booking_date') return formatDate(val);
+        if (col.key === 'payment_status') return val || '—';
         return val != null ? String(val) : '—';
       }));
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]); const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Orders');
       XLSX.writeFile(wb, `orders-export-${new Date().toISOString().slice(0, 10)}.xlsx`);
       try {
         const af = {};
         if (search?.trim()) af.search = search.trim();
-        if (!isFarm) {
-          if (slot) af.slot = slot;
-          if (day) af.day = day;
-          if (cowNumber?.trim()) af.cow_number = cowNumber.trim();
-        }
         if (orderType) af.order_type = orderType;
-        if (reference) af.reference = reference;
-        if (yearFilter)        af.year        = yearFilter;
+        if (batch) af.batch = batch;
+        if (yearFilter) af.year = yearFilter;
         await authFetch(`${API}/booking/orders/export-audit`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ count: toExport.length, ...(Object.keys(af).length > 0 && { filters: af }), ...(ids.length > 0 && { order_ids: ids }) }),
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            count: toExport.length,
+            ...(Object.keys(af).length > 0 && { filters: af }),
+            ...(ids.length > 0 && { order_ids: ids }),
+          }),
         });
-      } catch (e) { console.error('Audit log failed:', e); }
-    } catch (e) { alert('Export failed'); }
+      } catch (e) {
+        console.error('Audit log failed:', e);
+      }
+    } catch (e) {
+      alert('Export failed');
+    }
   };
 
-  /* ─────────────────────────────────────────────────────────── */
+  const currentBank = paymentOrder ? Number(paymentOrder.bank) || 0 : 0;
+  const currentCash = paymentOrder ? Number(paymentOrder.cash) || 0 : 0;
+  const newBank = currentBank + Math.max(0, parseFloat(addBank) || 0);
+  const newCash = currentCash + Math.max(0, parseFloat(addCash) || 0);
+  const currentReceived = paymentOrder ? Number(paymentOrder.received) || 0 : 0;
+  const addTotal = Math.max(0, parseFloat(addBank) || 0) + Math.max(0, parseFloat(addCash) || 0);
+  const newReceived = currentReceived + addTotal;
+  const totalAmount = paymentOrder ? Number(paymentOrder.total_amount) || 0 : 0;
+  const newPending = Math.max(0, totalAmount - newReceived);
+
+  const renderCell = (row, col) => {
+    const val = row[col.key];
+    if (col.key === 'payment_status') return <StatusPill status={val} />;
+    if (AMOUNT_KEYS.includes(col.key)) return formatAmount(val);
+    if (col.key === 'booking_date') return formatDate(val);
+    return val != null && val !== '' ? String(val) : '—';
+  };
+
+  const filterSelects = [
+    { label: 'Batch', val: batch, set: setBatch, opts: filters.batches || [], w: 104 },
+    { label: 'Type', val: orderType, set: setOrderType, opts: filters.order_types || [], w: 120 },
+  ];
+
   return (
     <>
       <style>{`
@@ -381,7 +494,6 @@ export default function OrderManagement() {
         }
 
         @media (max-width: 767px) {
-          /* align page heading with fixed mobile menu button */
           .om-root            { padding: 16px 12px 24px !important; overflow: auto !important; }
           .om-header          { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; margin-bottom: 12px !important; }
           .om-header h2       {
@@ -393,10 +505,8 @@ export default function OrderManagement() {
           .om-filter-toggle   { display: flex !important; }
           .om-filter-mobile   { display: block !important; }
           .om-table-wrap      { display: block !important; }
-          .om-cards           { display: none !important; }
           .om-pagination      { flex-direction: column !important; align-items: flex-start !important; }
 
-          /* ── Edit modal mobile overrides ── */
           .om-edit-modal-wrap { align-items: flex-end !important; padding: 0 !important; }
           .om-edit-modal-box  {
             border-radius: 20px 20px 0 0 !important;
@@ -429,7 +539,6 @@ export default function OrderManagement() {
 
       <div className="om-root" style={{ padding: '19px', fontFamily: "'Poppins','Inter',sans-serif", display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', overflow: 'hidden', boxSizing: 'border-box' }}>
 
-        {/* ── Header ── */}
         <div className="om-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px', flexShrink: 0 }}>
           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '600', color: '#333', whiteSpace: 'nowrap' }}>Order Management</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -443,24 +552,12 @@ export default function OrderManagement() {
           </div>
         </div>
 
-        {/* ── Desktop filter bar ── */}
         <div className="om-filter-desktop" style={{ display: 'flex', flexWrap: 'nowrap', gap: '10px', marginBottom: '16px', alignItems: 'flex-end', overflowX: 'auto', minWidth: 0, flexShrink: 0 }}>
           <div style={{ flex: '1 1 180px', minWidth: 0 }}>
             <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Search (name, phone, area, address)</label>
             <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchOrders()} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
           </div>
-          {!isFarm && (
-          <div style={{ width: 88, minWidth: 88, flexShrink: 0 }}>
-            <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px', whiteSpace: 'nowrap' }}>Cow number</label>
-            <input type="text" placeholder="Cow #" value={cowNumber} onChange={(e) => setCowNumber(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchOrders()} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
-          </div>
-          )}
-          {[
-            ...(!isFarm ? [{ label: 'Slot', val: slot, set: setSlot, opts: filters.slots || [], w: 104 }] : []),
-            { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes, w: 104 },
-            ...(!isFarm ? [{ label: 'Day', val: day, set: setDay, opts: filters.days || [], w: 80 }] : []),
-            { label: 'Reference', val: reference, set: setReference, opts: filters.references || [], w: 88 },
-          ].map(({ label, val, set, opts, w }) => (
+          {filterSelects.map(({ label, val, set, opts, w }) => (
             <div key={label} style={{ width: w, minWidth: w, flexShrink: 0 }}>
               <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px', whiteSpace: 'nowrap' }}>{label}</label>
               <select value={val} onChange={(e) => set(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }}>
@@ -476,7 +573,6 @@ export default function OrderManagement() {
           </div>
         </div>
 
-        {/* ── Mobile: search + toggle ── */}
         <div className="om-filter-toggle" style={{ display: 'none', gap: '8px', marginBottom: '8px', flexShrink: 0, alignItems: 'center' }}>
           <input type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchOrders()}
             style={{ flex: 1, padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }} />
@@ -487,23 +583,10 @@ export default function OrderManagement() {
           <button type="button" onClick={handleExport} style={{ padding: '9px 12px', borderRadius: '8px', background: '#7c3aed', color: '#fff', border: 'none', fontSize: '13px', cursor: 'pointer' }}>Export</button>
         </div>
 
-        {/* ── Mobile filter panel ── */}
         <div className="om-filter-mobile" style={{ display: 'none' }}>
           {mobileFiltersOpen && (
             <div className="ops-filter-mobile-panel">
-              {!isFarm && (
-              <div>
-                <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>Cow Number</label>
-                <input type="text" placeholder="Cow #" value={cowNumber} onChange={(e) => setCowNumber(e.target.value)}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }} />
-              </div>
-              )}
-              {[
-                ...(!isFarm ? [{ label: 'Slot', val: slot, set: setSlot, opts: filters.slots || [] }] : []),
-                { label: 'Type', val: orderType, set: setOrderType, opts: visibleOrderTypes },
-                ...(!isFarm ? [{ label: 'Day', val: day, set: setDay, opts: filters.days || [] }] : []),
-                { label: 'Reference', val: reference, set: setReference, opts: filters.references || [] },
-              ].map(({ label, val, set, opts }) => (
+              {filterSelects.map(({ label, val, set, opts }) => (
                 <div key={label}>
                   <label style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px' }}>{label}</label>
                   <select value={val} onChange={(e) => set(e.target.value)} style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #e0e0e0', fontSize: '13px' }}>
@@ -524,7 +607,6 @@ export default function OrderManagement() {
 
         {error && <div style={{ padding: '10px', background: '#FFF5F2', color: '#C62828', borderRadius: '6px', marginBottom: '13px', flexShrink: 0, fontSize: '10px' }}>{error}</div>}
 
-        {/* ── Desktop table ── */}
         <div className="om-table-wrap" style={{ flex: 1, minHeight: '304px', overflow: 'auto', border: '1px solid #e0e0e0', borderRadius: '6px', background: '#fff' }}>
           {loading ? (
             <div style={{ padding: '32px', textAlign: 'center', color: '#666', fontSize: '11px' }}>Loading orders...</div>
@@ -551,10 +633,7 @@ export default function OrderManagement() {
                     </td>
                     {COLUMNS.map((col) => (
                       <td key={col.key} style={{ padding: '8px', whiteSpace: 'nowrap' }}>
-                        {col.key === 'payment_status' ? <StatusPill status={row[col.key]} />
-                          : AMOUNT_KEYS.includes(col.key) ? formatAmount(row[col.key])
-                          : col.key === 'booking_date' ? formatDate(row[col.key])
-                          : (row[col.key] != null ? String(row[col.key]) : '—')}
+                        {renderCell(row, col)}
                       </td>
                     ))}
                     <td style={{ padding: '8px', whiteSpace: 'nowrap' }}>
@@ -569,16 +648,18 @@ export default function OrderManagement() {
           )}
         </div>
 
-        {/* ── Pagination ── */}
         {!loading && totalCount > 0 && (
           <div className="om-pagination" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', padding: '12px 0', borderTop: '1px solid #e0e0e0', marginTop: '8px', flexShrink: 0 }}>
             <span style={{ fontSize: '13px', color: '#666' }}>Showing {orders.length} of {totalCount} orders</span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
               <button type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ padding: '6px 12px', fontSize: '10px', background: page <= 1 ? '#f0f0f0' : '#fff', color: page <= 1 ? '#999' : '#333', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: page <= 1 ? 'not-allowed' : 'pointer' }}>Previous</button>
               {(() => {
-                const sp = 5; let start = Math.max(1, page - Math.floor(sp / 2)); let end = Math.min(totalPages, start + sp - 1);
+                const sp = 5;
+                let start = Math.max(1, page - Math.floor(sp / 2));
+                let end = Math.min(totalPages, start + sp - 1);
                 if (end - start + 1 < sp) start = Math.max(1, end - sp + 1);
-                const pages = []; for (let i = start; i <= end; i++) pages.push(i);
+                const pages = [];
+                for (let i = start; i <= end; i++) pages.push(i);
                 return pages.map((p) => (
                   <button key={p} type="button" onClick={() => setPage(p)} style={{ minWidth: '32px', padding: '6px 10px', fontSize: '10px', background: p === page ? '#FF5722' : '#fff', color: p === page ? '#fff' : '#333', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer', fontWeight: p === page ? 600 : 400 }}>{p}</button>
                 ));
@@ -588,23 +669,18 @@ export default function OrderManagement() {
           </div>
         )}
 
-        {/* ── Edit modal ── */}
         {editOpen && (
           <div
             className="om-edit-modal-wrap"
             style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}
-            onClick={() => !saving && (setEditErrors({}), setEditDuplicateError(null), setEditOpen(false), setEditPreviousRow(null))}
+            onClick={() => !saving && (setEditErrors({}), setEditOpen(false))}
           >
             <div
               className="om-edit-modal-box"
               style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(680px, 95vw)', maxHeight: '85vh', overflowY: 'auto', boxSizing: 'border-box' }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Mobile drag handle — hidden on desktop via CSS */}
-              <div
-                className="om-edit-drag-handle"
-                style={{ display: 'none', width: '40px', height: '4px', background: '#e0e0e0', borderRadius: '2px', margin: '0 auto 16px' }}
-              />
+              <div className="om-edit-drag-handle" style={{ display: 'none', width: '40px', height: '4px', background: '#e0e0e0', borderRadius: '2px', margin: '0 auto 16px' }} />
 
               <h3 style={{ margin: '0 0 12px 0', fontSize: '16px' }}>Edit Order</h3>
 
@@ -612,15 +688,12 @@ export default function OrderManagement() {
                 <div style={{ marginBottom: '10px', padding: '8px 10px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '12px' }}>Please fix the errors below before saving.</div>
               )}
 
-              <div style={{ fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '6px' }}>Update to</div>
-
               <div className="om-edit-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px' }}>
-                {(isFarm ? EDIT_FIELD_KEYS_FARM : EDIT_FIELD_KEYS_BOOKING).map((key) => {
+                {EDIT_FIELD_KEYS.map((key) => {
                   const isReadOnly = key === 'order_id' || key === 'customer_id' || key === 'received' || key === 'pending';
-                  const isCowHissaErr = !isFarm && (key === 'cow' || key === 'hissa') && editDuplicateError;
                   return (
                     <div key={key} style={{ minWidth: 0 }}>
-                      <label className="om-edit-field-label" style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>{key.replace(/_/g, ' ')}</label>
+                      <label className="om-edit-field-label" style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>{EDIT_LABELS[key] || key}</label>
                       <input
                         disabled={isReadOnly}
                         readOnly={isReadOnly}
@@ -630,39 +703,44 @@ export default function OrderManagement() {
                           setEditRow((prev) => {
                             const next = { ...prev, [key]: val };
                             if (key === 'total_amount') {
-                              const total    = parseFloat(val) || 0;
+                              const total = parseFloat(val) || 0;
                               const received = parseFloat(prev.received) || 0;
-                              next.pending   = Math.max(0, total - received).toFixed(2);
+                              next.pending = Math.max(0, total - received).toFixed(2);
                             }
                             const reErr = validateAmountsRealtime(next);
-                            setEditErrors((pe) => { const u = { ...pe }; delete u.total_amount; delete u.received; return { ...u, ...reErr }; });
+                            setEditErrors((pe) => {
+                              const u = { ...pe };
+                              delete u.total_amount;
+                              delete u.received;
+                              return { ...u, ...reErr };
+                            });
                             return next;
                           });
                         }}
                         className="om-edit-field-input"
-                        style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: (editErrors[key] || isCowHissaErr) ? '1px solid #dc2626' : '1px solid #e0e0e0', fontSize: '10px', ...(isReadOnly && { backgroundColor: '#f5f5f5', cursor: 'not-allowed' }) }}
+                        style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: editErrors[key] ? '1px solid #dc2626' : '1px solid #e0e0e0', fontSize: '10px', ...(isReadOnly && { backgroundColor: '#f5f5f5', cursor: 'not-allowed' }) }}
                       />
                       {editErrors[key] && <div className="om-edit-field-error" style={{ fontSize: '11px', color: '#dc2626', marginTop: '2px' }}>{editErrors[key]}</div>}
                     </div>
                   );
                 })}
 
-                {!isFarm && editDuplicateError && (
-                  <div style={{ gridColumn: '1 / -1', padding: '8px 12px', background: '#FEE2E2', borderRadius: '6px', border: '1px solid #FECACA', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                    <span style={{ fontSize: '16px', lineHeight: '1' }}>⚠️</span>
-                    <div>
-                      <div style={{ fontSize: '11px', fontWeight: '600', color: '#DC2626', marginBottom: '2px' }}>Duplicate Cow/Hissa Combination</div>
-                      <div style={{ fontSize: '10px', color: '#7F1D1D' }}>
-                        This cow + hissa combination is already used by Order <strong>{editDuplicateError.order_id}</strong>
-                        {editDuplicateError.booking_name ? ` (${editDuplicateError.booking_name})` : ''}
-                        {editDuplicateError.shareholder_name ? ` — ${editDuplicateError.shareholder_name}` : ''}. Please use a different combination.
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <div style={{ minWidth: 0 }}>
+                  <label className="om-edit-field-label" style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>{EDIT_LABELS.delivery_status}</label>
+                  <select
+                    value={editRow.delivery_status ?? 'Pending'}
+                    onChange={(e) => setEditRow((p) => ({ ...p, delivery_status: e.target.value }))}
+                    className="om-edit-field-input"
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '10px' }}
+                  >
+                    {DELIVERY_STATUS_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
 
                 <div style={{ minWidth: 0, gridColumn: '1 / -1' }}>
-                  <label className="om-edit-field-label" style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>description</label>
+                  <label className="om-edit-field-label" style={{ display: 'block', fontSize: '11px', color: '#666', marginBottom: '2px' }}>Description</label>
                   <textarea
                     className="om-edit-field-textarea"
                     value={editRow.description ?? ''}
@@ -674,14 +752,90 @@ export default function OrderManagement() {
               </div>
 
               <div className="om-edit-actions" style={{ marginTop: '14px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button type="button" onClick={() => { setEditDuplicateError(null); setEditOpen(false); }} disabled={saving} style={{ padding: '5px 11px', fontSize: '10px', background: '#f5f5f5', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Close</button>
+                <button type="button" onClick={() => setEditOpen(false)} disabled={saving} style={{ padding: '5px 11px', fontSize: '10px', background: '#f5f5f5', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Close</button>
                 <button type="button" onClick={handleSaveEdit} disabled={saving} style={{ padding: '5px 11px', fontSize: '10px', background: '#FF5722', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>{saving ? 'Saving...' : 'Save'}</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ── Cancel confirm modal ── */}
+        {paymentOrder && (
+          <div
+            className="om-edit-modal-wrap"
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '16px' }}
+            onClick={() => !submittingPayment && setPaymentOrder(null)}
+          >
+            <div
+              className="om-modal-box"
+              style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(520px, 95vw)', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 13px 0', fontSize: '13px', fontWeight: '600' }}>Add Payment</h3>
+
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '8px' }}>Current state</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', marginBottom: '13px', fontSize: '10px', padding: '8px 10px', background: '#f5f5f5', borderRadius: '6px', border: '1px solid #e8e8e8' }}>
+                <div><span style={{ color: '#666' }}>Customer ID</span><div style={{ fontWeight: '600' }}>{paymentOrder.customer_id ?? '—'}</div></div>
+                <div><span style={{ color: '#666' }}>Order ID</span><div style={{ fontWeight: '600' }}>{paymentOrder.order_id ?? '—'}</div></div>
+                <div><span style={{ color: '#666' }}>Name</span><div style={{ fontWeight: '600' }}>{paymentOrder.name ?? '—'}</div></div>
+                <div><span style={{ color: '#666' }}>Contact</span><div style={{ fontWeight: '600' }}>{paymentOrder.phone_number ?? '—'}</div></div>
+                <div><span style={{ color: '#666' }}>Booking Date</span><div style={{ fontWeight: '600' }}>{formatDate(paymentOrder.booking_date)}</div></div>
+                <div><span style={{ color: '#666' }}>Total Amount</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.total_amount)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Bank</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Cash</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.cash)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Received</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.received)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.pending)}</div></div>
+              </div>
+
+              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addCash) && (
+                <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
+                  {getPaymentRealtimeError()}
+                  {!getPaymentRealtimeError() && paymentErrors.add}
+                  {paymentErrors.addBank && <div>Add Bank: {paymentErrors.addBank}</div>}
+                  {paymentErrors.addCash && <div>Add Cash: {paymentErrors.addCash}</div>}
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Cash</label>
+                  <input
+                    type="number" min="0" step="0.01" value={addCash}
+                    onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, add: undefined })); }}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addCash) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank</label>
+                  <input
+                    type="number" min="0" step="0.01" value={addBank}
+                    onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addCash: undefined, add: undefined })); }}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBank) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
+                <div><span style={{ color: '#666' }}>New Bank Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
+                <div><span style={{ color: '#666' }}>New Cash Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newCash)}</div></div>
+                <div><span style={{ color: '#666' }}>New Received Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newReceived)}</div></div>
+                <div><span style={{ color: '#666' }}>New Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(newPending)}</div></div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => !submittingPayment && setPaymentOrder(null)} disabled={submittingPayment} style={{ padding: '8px 16px', background: '#e0e0e0', color: '#333', border: 'none', borderRadius: '8px', cursor: submittingPayment ? 'not-allowed' : 'pointer' }}>Close</button>
+                <button
+                  type="button"
+                  onClick={handleSubmitPayment}
+                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
+                  style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submittingPayment ? 'not-allowed' : 'pointer' }}
+                >
+                  {submittingPayment ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {cancelConfirm && (
           <div className="om-cancel-modal-wrap" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '16px' }}>
             <div className="om-modal-box" style={{ background: '#fff', borderRadius: '12px', padding: '24px', maxWidth: '400px', width: '100%' }}>
