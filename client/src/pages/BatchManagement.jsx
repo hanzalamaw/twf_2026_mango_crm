@@ -25,6 +25,7 @@ function formatDate(val) {
 
 export default function BatchManagement() {
   const [batches, setBatches] = useState([]);
+  const [year, setYear] = useState('2026');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -40,7 +41,8 @@ export default function BatchManagement() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${API}/batches`, { headers: { Authorization: `Bearer ${token}` } });
+      const y = encodeURIComponent(year);
+      const res = await fetch(`${API}/batches?year=${y}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error('Failed to load batches');
       const data = await res.json();
       setBatches(Array.isArray(data.data) ? data.data : []);
@@ -49,7 +51,7 @@ export default function BatchManagement() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, year]);
 
   useEffect(() => { fetchBatches(); }, [fetchBatches]);
 
@@ -125,10 +127,26 @@ export default function BatchManagement() {
     <div style={{ padding: '19px', fontFamily: "'Poppins', 'Inter', sans-serif", background: '#F9FAFB', minHeight: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
         <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: '#333' }}>Batch Management</h2>
-        <button type="button" onClick={openCreate}
-          style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#FF5722', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-          Add New Batch
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <select
+            value={year}
+            onChange={(e) => setYear(e.target.value)}
+            style={{
+              padding: '8px 12px', borderRadius: '6px', border: '1px solid #e0e0e0',
+              fontSize: '12px', background: '#fff', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+            aria-label="Filter by year"
+          >
+            <option value="all">All Year</option>
+            <option value="2026">2026</option>
+            <option value="2025">2025</option>
+            <option value="2024">2024</option>
+          </select>
+          <button type="button" onClick={openCreate}
+            style={{ padding: '8px 16px', borderRadius: '6px', border: 'none', background: '#FF5722', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+            Add New Batch
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -151,7 +169,7 @@ export default function BatchManagement() {
             </thead>
             <tbody>
               {batches.length === 0 ? (
-                <tr><td colSpan={9} style={{ padding: '24px', textAlign: 'center', color: '#999', fontSize: '12px' }}>No batches yet. Click Add New Batch.</td></tr>
+                <tr><td colSpan={9} style={{ padding: '24px', textAlign: 'center', color: '#999', fontSize: '12px' }}>No batches for {year === 'all' ? 'any year' : year}. Click Add New Batch.</td></tr>
               ) : batches.map((row) => (
                 <tr key={row.batch_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 600 }}>{row.batch_number}</td>

@@ -199,7 +199,7 @@ const AcceptTerms = () => {
         >
           {/* Header */}
           <div style={{ flexShrink: 0, marginBottom: '12px' }}>
-            <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Cattle CRM</p>
+            <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Mango CRM</p>
             <h1 className="at-title" style={{ fontSize: '24px', fontWeight: '700', color: '#333', margin: 0 }}>Terms & Conditions</h1>
             <p className="at-hint" style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>Please scroll to the bottom to accept.</p>
           </div>

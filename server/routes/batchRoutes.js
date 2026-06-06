@@ -1,5 +1,6 @@
 import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
+import { buildBatchReceivedYearWhere, buildBatchCreatedYearWhere } from "../utils/yearFilter.js";
 
 function toDateOnly(v) {
   if (v == null || v === "") return null;
@@ -25,11 +26,19 @@ function normalizeBatchRow(row) {
 }
 
 export function registerBatchRoutes(app, db, verifyToken) {
-  app.get("/api/batches", verifyToken, async (_req, res) => {
+  app.get("/api/batches", verifyToken, async (req, res) => {
     try {
+      const { year = "all", created_year } = req.query;
+      const params = [];
+      const yearConditions = created_year
+        ? buildBatchCreatedYearWhere(created_year, params, "b")
+        : buildBatchReceivedYearWhere(year, params, "b");
+      const where = yearConditions.length ? `WHERE ${yearConditions.join(" AND ")}` : "";
       const [rows] = await db.execute(
-        `SELECT * FROM batches
-         ORDER BY CAST(batch_number AS UNSIGNED) ASC, batch_number ASC`
+        `SELECT b.* FROM batches b
+         ${where}
+         ORDER BY CAST(b.batch_number AS UNSIGNED) ASC, b.batch_number ASC`,
+        params
       );
       res.json({ data: rows.map(normalizeBatchRow) });
     } catch (e) {

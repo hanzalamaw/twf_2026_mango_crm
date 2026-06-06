@@ -13,6 +13,15 @@ const EMPTY_FORM = {
   total_amount: '', source: '', description: '', batch: '',
 };
 
+const labelStyle = { display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px', fontWeight: '500' };
+
+const Field = ({ label, children, wide }) => (
+  <div style={wide ? { gridColumn: '1 / -1' } : undefined}>
+    <label style={labelStyle}>{label}</label>
+    {children}
+  </div>
+);
+
 const NewOrder = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -45,7 +54,7 @@ const NewOrder = () => {
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) return;
-    fetch(`${API}/batches`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${API}/batches?created_year=2026`, { headers: { Authorization: `Bearer ${token}` } })
       .then((r) => r.ok ? r.json() : { data: [] })
       .then((data) => {
         const list = Array.isArray(data.data) ? data.data : [];
@@ -197,16 +206,8 @@ const NewOrder = () => {
     background: '#FFFFFF', boxSizing: 'border-box', fontFamily: 'inherit',
   };
   const textareaStyle = { ...inputStyle, minHeight: '100px', resize: 'vertical' };
-  const labelStyle = { display: 'block', fontSize: '11px', color: '#666', marginBottom: '4px', fontWeight: '500' };
   const sectionStyle = { background: '#FFFFFF', borderRadius: '8px', padding: '16px', marginBottom: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' };
   const sectionTitleStyle = { fontSize: '12px', fontWeight: '600', color: '#FF5722', marginBottom: '14px', paddingBottom: '8px', borderBottom: '1px solid #e0e0e0' };
-
-  const Field = ({ label, children, wide }) => (
-    <div style={wide ? { gridColumn: '1 / -1' } : undefined}>
-      <label style={labelStyle}>{label}</label>
-      {children}
-    </div>
-  );
 
   return (
     <div style={{ padding: '19px', fontFamily: "'Poppins', 'Inter', sans-serif", background: '#F9FAFB', minHeight: '100%' }}>

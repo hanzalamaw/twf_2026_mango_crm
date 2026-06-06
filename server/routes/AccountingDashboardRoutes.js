@@ -1,5 +1,6 @@
 // server/routes/AccountingDashboardRoutes.js
 import { logError } from "../utils/logger.js";
+import { buildPaymentYearWhere } from "../utils/yearFilter.js";
 
 function toDateOnly(v) {
   if (v == null || v === "") return v;
@@ -14,19 +15,6 @@ function toDateOnly(v) {
   const s = String(v);
   const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : s;
-}
-
-function buildPaymentYearWhere(year, params) {
-  const conditions = [];
-
-  if (year === "2026" || year === "2025") {
-    conditions.push("YEAR(p.date) = ?");
-    params.push(year);
-  } else if (year === "2024") {
-    conditions.push("(p.date IS NULL OR YEAR(p.date) < 2025)");
-  }
-
-  return conditions;
 }
 
 function buildExpenseYearWhere(year, params, col = "e.done_at") {

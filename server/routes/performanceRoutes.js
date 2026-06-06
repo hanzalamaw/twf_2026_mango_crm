@@ -1,5 +1,6 @@
 // Performance Management API: performers (performance_targets), daily reports (pms_daily_report), stats.
 import { logError } from "../utils/logger.js";
+import { buildOrderYearWhere } from "../utils/yearFilter.js";
 
 /** Exactly the 4 booking types requested for performance stats. */
 const PERFORMANCE_4_TYPES_SQL = `
@@ -14,14 +15,8 @@ const PERFORMANCE_4_TYPES_SQL = `
 
 /** Same year rules as GET /api/booking/orders (Order Management totals). */
 function appendBookingOrdersYearFilter(year, params) {
-  if (year === "2026" || year === "2025") {
-    params.push(year);
-    return "YEAR(o.booking_date) = ?";
-  }
-  if (year === "2024") {
-    return "(o.booking_date IS NULL OR YEAR(o.booking_date) < 2025)";
-  }
-  return "";
+  const conditions = buildOrderYearWhere(year, params, "o");
+  return conditions.length ? conditions[0] : "";
 }
 
 /** closed_by matches performer display name or linked user (username / full name). */

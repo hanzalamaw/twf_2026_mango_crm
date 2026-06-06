@@ -1,22 +1,12 @@
 import { logError } from "../utils/logger.js";
+import { buildOrderBookingYearWhere, buildBatchReceivedYearWhere, buildOrderYearWhere, batchOrderJoinSql, orderKgExpr } from "../utils/yearFilter.js";
 
-/**
- * Year filter on booking_date (matches booking APIs):
- * - 2026/2025: YEAR(booking_date) = year
- * - 2024: booking_date IS NULL OR YEAR(booking_date) < 2025
- * - all: no filter
- */
 function buildYearWhere(year, params) {
-  const conditions = [];
+  return buildOrderBookingYearWhere(year, params, "o");
+}
 
-  if (year === "2026" || year === "2025") {
-    conditions.push("YEAR(o.booking_date) = ?");
-    params.push(year);
-  } else if (year === "2024") {
-    conditions.push("(o.booking_date IS NULL OR YEAR(o.booking_date) < 2025)");
-  }
-
-  return conditions;
+function calcUnordered(received, ordered, weightLoss, compensation, rotten) {
+  return Number(received || 0) - Number(ordered || 0) - Number(weightLoss || 0) - Number(compensation || 0) - Number(rotten || 0);
 }
 
 function slugifyOrderType(value) {
@@ -253,11 +243,17 @@ export function registerDashboardRoutes(app, db, verifyToken) {
     }
   });
 
-  // GET /api/dashboard/batches?year=... — batch numbers from batches table
-  app.get("/api/dashboard/batches", verifyToken, async (_req, res) => {
+  // GET /api/dashboard/batches?year=... — batch numbers from batches table (by received_date year)
+  app.get("/api/dashboard/batches", verifyToken, async (req, res) => {
     try {
+      const { year = "all" } = req.query;
+      const params = [];
+      const yearConditions = buildBatchReceivedYearWhere(year, params);
+      const where = yearConditions.length ? `WHERE ${yearConditions.join(" AND ")}` : "";
       const [rows] = await db.execute(
-        `SELECT batch_number AS batch FROM batches ORDER BY CAST(batch_number AS UNSIGNED) ASC, batch_number ASC`
+        `SELECT b.batch_number AS batch FROM batches b ${where}
+         ORDER BY CAST(b.batch_number AS UNSIGNED) ASC, b.batch_number ASC`,
+        params
       );
       const batches = (rows || []).map((r) => String(r.batch || "").trim()).filter(Boolean);
       res.json({ batches });
@@ -268,14 +264,18 @@ export function registerDashboardRoutes(app, db, verifyToken) {
   });
 
   // GET /api/dashboard/mangoes-summary?year=...
+  // Batches filtered by received_date year; order metrics use booking_date year buckets (2026/2024/else 2025).
   app.get("/api/dashboard/mangoes-summary", verifyToken, async (req, res) => {
     try {
       const { year = "all" } = req.query;
       const params = [];
-      const orderConditions = buildYearWhere(year, params);
-      const joinOn = orderConditions.length
-        ? `TRIM(o.batch) = TRIM(b.batch_number) AND ${orderConditions.join(" AND ")}`
-        : "TRIM(o.batch) = TRIM(b.batch_number)";
+      const orderYearConditions = buildOrderYearWhere(year, params, "o");
+      const batchConditions = buildBatchReceivedYearWhere(year, params, "b");
+      const batchWhere = batchConditions.length ? `WHERE ${batchConditions.join(" AND ")}` : "";
+      const orderYearAnd = orderYearConditions.length
+        ? ` AND ${orderYearConditions.join(" AND ")}`
+        : "";
+      const kg = orderKgExpr("o");
 
       const [rows] = await db.execute(
         `
@@ -286,17 +286,16 @@ export function registerDashboardRoutes(app, db, verifyToken) {
           b.compensation_or_gift,
           b.rotten,
           b.weight_loss,
-          COALESCE(SUM(COALESCE(o.weight, 0) * COALESCE(o.quantity, 1)), 0) AS ordered_kg,
-          COALESCE(SUM(CASE WHEN o.delivery_status = 'Delivered'
-            THEN COALESCE(o.weight, 0) * COALESCE(o.quantity, 1) ELSE 0 END), 0) AS delivered_kg,
+          COALESCE(SUM(${kg}), 0) AS ordered_kg,
+          COALESCE(SUM(CASE WHEN o.delivery_status = 'Delivered' THEN ${kg} ELSE 0 END), 0) AS delivered_kg,
           COALESCE(SUM(CASE WHEN o.delivery_status = 'Delivered'
             THEN COALESCE(o.pending_amount, 0) ELSE 0 END), 0) AS delivered_pending,
-          COALESCE(SUM(CASE WHEN o.delivery_status = 'Pending'
-            THEN COALESCE(o.weight, 0) * COALESCE(o.quantity, 1) ELSE 0 END), 0) AS undelivered_kg,
+          COALESCE(SUM(CASE WHEN o.delivery_status = 'Pending' THEN ${kg} ELSE 0 END), 0) AS undelivered_kg,
           COALESCE(SUM(CASE WHEN o.delivery_status = 'Pending'
             THEN COALESCE(o.pending_amount, 0) ELSE 0 END), 0) AS undelivered_pending
         FROM batches b
-        LEFT JOIN orders o ON ${joinOn}
+        LEFT JOIN orders o ON ${batchOrderJoinSql("o", "b")}${orderYearAnd}
+        ${batchWhere}
         GROUP BY b.batch_id, b.batch_number, b.received_in_kgs, b.compensation_or_gift, b.rotten, b.weight_loss
         ORDER BY CAST(b.batch_number AS UNSIGNED) ASC, b.batch_number ASC
         `,
@@ -312,7 +311,7 @@ export function registerDashboardRoutes(app, db, verifyToken) {
         const rotten = Number(r.rotten || 0);
         const weightLoss = Number(r.weight_loss || 0);
         const ordered = Number(r.ordered_kg || 0);
-        const unordered = Math.max(0, received - compensation - rotten - weightLoss - ordered);
+        const unordered = calcUnordered(received, ordered, weightLoss, compensation, rotten);
         return {
           batch_number: r.batch_number,
           received,

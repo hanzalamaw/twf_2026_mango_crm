@@ -212,10 +212,14 @@ CREATE TABLE IF NOT EXISTS `booking_expenses` (
   `total` decimal(10,2) DEFAULT 0.00,
   `done_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `description` text DEFAULT NULL,
+  `category_id` int(11) DEFAULT NULL,
+  `sub_category_id` int(11) DEFAULT NULL,
   `done_by` varchar(255) DEFAULT NULL,
   `created_by` int(11) DEFAULT NULL,
   PRIMARY KEY (`expense_id`),
-  KEY `created_by` (`created_by`)
+  KEY `created_by` (`created_by`),
+  KEY `category_id` (`category_id`),
+  KEY `sub_category_id` (`sub_category_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -224,7 +228,32 @@ CREATE TABLE IF NOT EXISTS `booking_expenses` (
 CREATE TABLE IF NOT EXISTS `booking_expense_categories` (
   `category_id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(100) NOT NULL,
+  `budget` decimal(12,2) NOT NULL DEFAULT 0.00,
   PRIMARY KEY (`category_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- booking_expense_sub_categories (Accounting)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `booking_expense_sub_categories` (
+  `sub_category_id` int(11) NOT NULL AUTO_INCREMENT,
+  `category_id` int(11) NOT NULL,
+  `name` varchar(100) NOT NULL,
+  `budget` decimal(12,2) NOT NULL DEFAULT 0.00,
+  PRIMARY KEY (`sub_category_id`),
+  KEY `category_id` (`category_id`),
+  CONSTRAINT `booking_expense_sub_cat_fk` FOREIGN KEY (`category_id`) REFERENCES `booking_expense_categories` (`category_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- booking_expense_export_audit
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `booking_expense_export_audit` (
+  `audit_id` int(11) NOT NULL AUTO_INCREMENT,
+  `record_count` int(11) NOT NULL DEFAULT 0,
+  `expense_ids` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`expense_ids`)),
+  `exported_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`audit_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

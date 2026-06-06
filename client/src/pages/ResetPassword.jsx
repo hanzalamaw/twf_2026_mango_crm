@@ -182,7 +182,7 @@ const ResetPassword = () => {
             boxSizing: 'border-box',
           }}>
             <div style={{ marginBottom: '20px' }}>
-              <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>Your logo</p>
+              <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Mango CRM</p>
               <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#333', margin: 0 }}>Set New Password</h1>
             </div>
 

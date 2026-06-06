@@ -47,13 +47,13 @@ Six KPI cards:
 - Total Pending Amount
 
 Additional dashboard views:
-- **Batch Wise Order Summary** — per-batch inventory vs. orders (received, compensation/gift, rotten, weight loss, ordered, delivered/undelivered pending amounts, unordered stock)
+- **Batch Wise Order Summary** — per-batch inventory vs. orders for the selected year (batches by `received_date`; order metrics by booking year bucket: 2026, 2024, or else 2025)
 - **Source-Wise Order Summary**
 - **Area Wise Orders** (filterable by batch)
 - **Sales Overview** chart
 
 #### Batch Management
-Managers create and maintain mango batches:
+Managers create and maintain mango batches (filterable by year via `received_date`):
 - Batch number, received weight (KG & units), rotten, compensation/gift, weight loss, description, received date
 - Add, edit, and delete batches from a dedicated page (`/bookings/batches`)
 

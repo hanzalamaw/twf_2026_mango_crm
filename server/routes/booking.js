@@ -2,6 +2,7 @@ import PDFDocument from "pdfkit";
 import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
 import { limitOffsetClause } from "../utils/sqlPagination.js";
+import { buildBatchReceivedYearWhere, buildOrderBatchFilter, buildOrderYearWhere } from "../utils/yearFilter.js";
 
 /** Normalize to date-only YYYY-MM-DD for consistent display and audit (avoids timezone shift). */
 function toDateOnly(v) {
@@ -178,9 +179,12 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       const year = 2026;
       const prefix = "M";
+      const idParams = [`${prefix}-%`];
+      const yearConds = buildOrderYearWhere(String(year), idParams, null);
+      const yearSql = yearConds.length ? ` AND ${yearConds[0]}` : "";
       const [idRows] = await db.execute(
-        "SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(order_id, '-', 2), '-', -1) AS UNSIGNED)), 0) AS nextId FROM orders WHERE order_id LIKE ? AND (YEAR(booking_date) = ? OR booking_date IS NULL)",
-        [`${prefix}-%`, year]
+        `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(order_id, '-', 2), '-', -1) AS UNSIGNED)), 0) AS nextId FROM orders WHERE order_id LIKE ?${yearSql}`,
+        idParams
       );
 
       const nextNum = Number(idRows[0]?.nextId || 0) + 1;
@@ -322,12 +326,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const conditions = [];
       const params = [];
 
-      if (year === "2026" || year === "2025") {
-        conditions.push("YEAR(o.booking_date) = ?");
-        params.push(year);
-      } else if (year === "2024") {
-        conditions.push("(o.booking_date IS NULL OR YEAR(o.booking_date) < 2025)");
-      }
+      conditions.push(...buildOrderYearWhere(year, params, "o"));
 
       if (search && search.trim()) {
         const term = `%${search.trim()}%`;
@@ -346,8 +345,8 @@ export function registerBookingRoutes(app, db, verifyToken) {
       }
 
       if (batch) {
-        conditions.push("o.batch = ?");
-        params.push(batch);
+        const batchCond = buildOrderBatchFilter(batch, params, "o");
+        if (batchCond) conditions.push(batchCond);
       }
 
       if (payment_status === "pending") {
@@ -438,12 +437,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const conditions = [];
       const params = [];
 
-      if (year === "2026" || year === "2025") {
-        conditions.push("YEAR(o.booking_date) = ?");
-        params.push(year);
-      } else if (year === "2024") {
-        conditions.push("(o.booking_date IS NULL OR YEAR(o.booking_date) < 2025)");
-      }
+      conditions.push(...buildOrderYearWhere(year, params, "o"));
 
       const typesRaw = Array.isArray(order_type) ? order_type : order_type ? [order_type] : [];
       if (typesRaw.length > 0) {
@@ -475,26 +469,50 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const conditions = [];
       const params = [];
 
-      if (year === "2026" || year === "2025") {
-        conditions.push("YEAR(booking_date) = ?");
-        params.push(year);
-      } else if (year === "2024") {
-        conditions.push("(booking_date IS NULL OR YEAR(booking_date) < 2025)");
-      }
+      conditions.push(...buildOrderYearWhere(year, params, "o"));
 
       const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       const andOrWhere = whereClause ? " AND " : " WHERE ";
 
-      const [batches] = await db.execute(
-        `SELECT batch_number AS value FROM batches ORDER BY CAST(batch_number AS UNSIGNED) ASC, batch_number ASC`
+      const batchParams = [];
+      const batchYearConditions = buildBatchReceivedYearWhere(year, batchParams, "b");
+      const batchTableWhere = batchYearConditions.length ? `WHERE ${batchYearConditions.join(" AND ")}` : "";
+
+      const [batchesFromTable] = await db.execute(
+        `SELECT batch_number AS value FROM batches b ${batchTableWhere}
+         ORDER BY CAST(batch_number AS UNSIGNED) ASC, batch_number ASC`,
+        batchParams
       );
+
+      const orderBatchParams = [];
+      const orderYearConditions = buildOrderYearWhere(year, orderBatchParams, "o");
+      const orderBatchWhere = orderYearConditions.length
+        ? `WHERE ${orderYearConditions.join(" AND ")} AND o.batch IS NOT NULL AND TRIM(o.batch) != ''`
+        : "WHERE o.batch IS NOT NULL AND TRIM(o.batch) != ''";
+
+      const [batchesFromOrders] = await db.execute(
+        `SELECT DISTINCT TRIM(o.batch) AS value FROM orders o ${orderBatchWhere} ORDER BY value`,
+        orderBatchParams
+      );
+
+      const batchSet = new Set([
+        ...batchesFromTable.map((r) => String(r.value ?? "").trim()),
+        ...batchesFromOrders.map((r) => String(r.value ?? "").trim()),
+      ].filter(Boolean));
+
+      const batches = [...batchSet].sort((a, b) => {
+        const na = parseInt(a, 10);
+        const nb = parseInt(b, 10);
+        if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+        return a.localeCompare(b);
+      });
       const [types] = await db.execute(
-        `SELECT DISTINCT order_type AS value FROM orders ${whereClause}${andOrWhere}order_type IS NOT NULL ORDER BY value`,
+        `SELECT DISTINCT o.order_type AS value FROM orders o ${whereClause}${andOrWhere}o.order_type IS NOT NULL ORDER BY value`,
         params
       );
 
       res.json({
-        batches: batches.map((r) => r.value),
+        batches,
         order_types: types.map((r) => r.value),
       });
     } catch (error) {
@@ -1070,14 +1088,18 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const { customerId } = req.params;
       const INVOICE_BOOKING_YEAR = 2026;
 
+      const invoiceParams = [customerId];
+      const invoiceYearConds = buildOrderYearWhere(String(INVOICE_BOOKING_YEAR), invoiceParams, "o");
+      const invoiceYearSql = invoiceYearConds.length ? ` AND ${invoiceYearConds[0]}` : "";
+
       const [orders] = await db.execute(
         `SELECT o.order_id, o.name, o.contact, o.address, o.area,
                 o.order_type AS type, o.booking_date, o.total_amount,
                 o.received_amount, o.pending_amount, o.weight, o.quantity, o.batch
          FROM orders o
-         WHERE o.customer_id = ? AND YEAR(o.booking_date) = ?
+         WHERE o.customer_id = ?${invoiceYearSql}
          ORDER BY o.booking_date, o.order_id`,
-        [customerId, INVOICE_BOOKING_YEAR]
+        invoiceParams
       );
 
       if (orders.length === 0) {

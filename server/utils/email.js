@@ -30,11 +30,11 @@ export const sendPasswordEmail = async (email, newPassword) => {
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.EMAIL_USER || "noreply@twfcattlecrm.com",
       to: email,
-      subject: "Your Password - TWF Cattle CRM",
+      subject: "Your Password - TWF Mango CRM",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #FF5722;">Password Recovery</h2>
-          <p>You requested your password for your TWF Cattle CRM account.</p>
+          <p>You requested your password for your TWF Mango CRM account.</p>
           <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
             <p style="margin: 0; font-size: 14px; color: #666;">Your password is:</p>
             <p style="margin: 10px 0 0 0; font-size: 18px; font-weight: bold; color: #333; letter-spacing: 2px;">${newPassword}</p>
@@ -64,11 +64,11 @@ export const sendResetLinkEmail = async (email, resetLink) => {
     const mailOptions = {
       from: process.env.SMTP_FROM || process.env.EMAIL_USER || "noreply@twfcattlecrm.com",
       to: email,
-      subject: "Reset Your Password - TWF Cattle CRM",
+      subject: "Reset Your Password - TWF Mango CRM",
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #FF5722;">Reset Your Password</h2>
-          <p>You requested to reset your password for your TWF Cattle CRM account.</p>
+          <p>You requested to reset your password for your TWF Mango CRM account.</p>
           <p>Click the link below to choose a new password. This link expires in 1 hour.</p>
           <div style="margin: 24px 0;">
             <a href="${resetLink}" style="display: inline-block; background-color: #FF5722; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600;">Reset Password</a>
@@ -89,11 +89,11 @@ export const sendResetLinkEmail = async (email, resetLink) => {
   }
 };
 
-const LOGIN_EMAIL_PRODUCT_NAME = "TWF Cattle CRM";
+const LOGIN_EMAIL_PRODUCT_NAME = "TWF Mango CRM";
 
 /**
  * Send security alert email when user logs in.
- * Top heading uses APP_NAME (e.g. RGOC ERP); all body text uses TWF Cattle CRM.
+ * Top heading uses APP_NAME (e.g. RGOC ERP); all body text uses TWF Mango CRM.
  * Supports light and dark email client themes via prefers-color-scheme.
  */
 export const sendLoginNotificationEmail = async (email, fullName, username, loginTime = new Date()) => {

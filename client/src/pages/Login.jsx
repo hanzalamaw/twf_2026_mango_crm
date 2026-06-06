@@ -159,7 +159,7 @@ const Login = () => {
             margin: '0 auto'
           }}>
             <div style={{ marginBottom: '16px' }}>
-              <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>Your logo</p>
+              <p style={{ color: '#FF5722', fontSize: '12px', fontWeight: '500', margin: '0 0 4px 0' }}>TWF Mango CRM</p>
               <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#333', margin: 0 }}>Login</h1>
             </div>
 
