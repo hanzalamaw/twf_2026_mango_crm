@@ -1089,35 +1089,16 @@ const Control = () => {
               </div>
               {roleFormData.operation_management && (
                 <div style={{ marginLeft: '28px', marginTop: '10px', padding: '12px', background: '#fff', borderRadius: '8px', border: '1px solid #eee' }}>
-                  <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Screens within Operations (choose separately)</div>
+                  <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Operations modules</div>
                   {[
-                    { key: 'operation_general_dashboard', label: 'General Dashboard' },
-                    { key: 'operation_customer_support', label: 'Customer Support' },
+                    { key: 'operation_rider_management', label: 'Rider Management' },
                     { key: 'operation_deliveries_management', label: 'Deliveries Management' },
-                    { key: 'operation_challan_management', label: 'Challan Management' },
-                    { key: 'operation_affluent_management', label: 'Affluent Management' },
-                    { key: 'operation_special_request_management', label: 'Special Request Management' },
-                    { key: 'operation_slaughter_management', label: 'Slaughter Management' },
-                    { key: 'operation_line_management', label: 'Line Management' },
                   ].map(perm => (
                     <div key={perm.key} style={{ marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
-                      <input type="checkbox" id={perm.key} checked={roleFormData[perm.key]} onChange={(e) => setRoleFormData({ ...roleFormData, [perm.key]: e.target.checked })} style={{ marginRight: '10px', width: '16px', height: '16px', cursor: 'pointer' }} />
+                      <input type="checkbox" id={perm.key} checked={roleFormData[perm.key]} onChange={(e) => setRoleFormData({ ...roleFormData, [perm.key]: e.target.checked, operation_rider_management_supervisor: false })} style={{ marginRight: '10px', width: '16px', height: '16px', cursor: 'pointer' }} />
                       <label htmlFor={perm.key} style={{ fontSize: '12px', color: '#333', cursor: 'pointer' }}>{perm.label}</label>
                     </div>
                   ))}
-                  <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px solid #eee' }}>
-                    <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Rider access (choose one)</div>
-                    {[
-                      { id: 'rider_mode_none', label: 'No rider screen', checked: !roleFormData.operation_rider_management && !roleFormData.operation_rider_management_supervisor, onChange: () => setRoleFormData({ ...roleFormData, operation_rider_management: false, operation_rider_management_supervisor: false }) },
-                      { id: 'rider_mode_admin', label: 'Rider Management (Admin)', checked: roleFormData.operation_rider_management, onChange: () => setRoleFormData({ ...roleFormData, operation_rider_management: true, operation_rider_management_supervisor: false }) },
-                      { id: 'rider_mode_sup', label: 'Rider Management (Supervisor)', checked: roleFormData.operation_rider_management_supervisor, onChange: () => setRoleFormData({ ...roleFormData, operation_rider_management: false, operation_rider_management_supervisor: true }) },
-                    ].map((opt) => (
-                      <div key={opt.id} style={{ marginBottom: '8px', display: 'flex', alignItems: 'center' }}>
-                        <input type="radio" id={opt.id} name="rider_ops_mode" checked={opt.checked} onChange={opt.onChange} style={{ marginRight: '10px', width: '16px', height: '16px', cursor: 'pointer' }} />
-                        <label htmlFor={opt.id} style={{ fontSize: '12px', color: '#333', cursor: 'pointer' }}>{opt.label}</label>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>

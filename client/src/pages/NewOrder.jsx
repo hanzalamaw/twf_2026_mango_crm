@@ -8,7 +8,7 @@ const WEIGHT_PRESETS = ['10', '5', 'custom'];
 const QUANTITY_PRESETS = ['1', '2', '3', '4', '5', 'custom'];
 
 const EMPTY_FORM = {
-  order_id: '', customer_id: '', contact: '', order_type: '', name: '',
+  order_id: '', customer_id: '', contact: '', alt_contact: '', order_type: '', name: '',
   address: '', area: '', weight: '', quantity: '', booking_date: '',
   total_amount: '', source: '', description: '', batch: '',
 };
@@ -159,6 +159,54 @@ const NewOrder = () => {
     e.preventDefault();
     setError('');
     setSuccess('');
+    if (!formData.order_type?.trim()) {
+      setError('Please select an order type');
+      return;
+    }
+    if (!formData.order_id?.trim()) {
+      setError('Order ID could not be generated — select an order type and try again');
+      return;
+    }
+    if (!formData.batch?.trim()) {
+      setError('Please select a batch');
+      return;
+    }
+    if (!formData.booking_date?.trim()) {
+      setError('Please select a booking date');
+      return;
+    }
+    if (!formData.contact?.trim()) {
+      setError('Contact is required');
+      return;
+    }
+    if (!formData.customer_id?.trim()) {
+      setError('Customer ID could not be generated — enter a valid contact number');
+      return;
+    }
+    if (!formData.name?.trim()) {
+      setError('Name is required');
+      return;
+    }
+    if (!formData.alt_contact?.trim()) {
+      setError('Alt contact is required');
+      return;
+    }
+    if (!formData.area?.trim()) {
+      setError('Area is required');
+      return;
+    }
+    if (!formData.address?.trim()) {
+      setError('Address is required');
+      return;
+    }
+    if (!formData.source?.trim()) {
+      setError('Please select a source');
+      return;
+    }
+    if (formData.total_amount === '' || formData.total_amount == null) {
+      setError('Total amount is required');
+      return;
+    }
     const weightVal = weightMode === 'custom' ? weightCustom : weightMode;
     const qtyVal = quantityMode === 'custom' ? quantityCustom : quantityMode;
     if (!weightVal || Number(weightVal) <= 0) {
@@ -183,8 +231,8 @@ const NewOrder = () => {
       if (res.ok) {
         setSuccess('Order created successfully!');
         if (keepFormData) {
-          generateOrderId(formData.order_type);
-          setFormData((p) => ({ ...p, order_id: '', customer_id: '', contact: '', name: '', address: '', area: '', description: '', total_amount: '' }));
+          setFormData((p) => ({ ...p, order_id: '' }));
+          await generateOrderId(formData.order_type);
           setTimeout(() => setSuccess(''), 2000);
         } else {
           resetFormPreservingBatch();
@@ -232,8 +280,8 @@ const NewOrder = () => {
                 {ORDER_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="Order ID">
-              <input style={{ ...inputStyle, background: '#f9f9f9' }} value={formData.order_id} readOnly placeholder="Auto-generated" />
+            <Field label="Order ID *">
+              <input style={{ ...inputStyle, background: '#f9f9f9' }} value={formData.order_id} readOnly placeholder="Auto-generated" required />
             </Field>
             <Field label="Batch *">
               <select style={inputStyle} value={formData.batch} onChange={(e) => setFormData((p) => ({ ...p, batch: e.target.value }))} required>
@@ -241,8 +289,8 @@ const NewOrder = () => {
                 {batches.map((b) => <option key={b.batch_id} value={b.batch_number}>Batch {b.batch_number}</option>)}
               </select>
             </Field>
-            <Field label="Booking Date">
-              <input type="date" style={inputStyle} value={formData.booking_date} onChange={(e) => setFormData((p) => ({ ...p, booking_date: e.target.value }))} />
+            <Field label="Booking Date *">
+              <input type="date" style={inputStyle} value={formData.booking_date} onChange={(e) => setFormData((p) => ({ ...p, booking_date: e.target.value }))} required />
             </Field>
           </div>
         </div>
@@ -250,20 +298,25 @@ const NewOrder = () => {
         <div style={sectionStyle}>
           <div style={sectionTitleStyle}>Customer</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '14px' }}>
-            <Field label="Contact *">
-              <input style={inputStyle} value={formData.contact} onChange={handleContactChange} required placeholder="03XX-XXXXXXX" />
-            </Field>
-            <Field label="Customer ID">
-              <input style={{ ...inputStyle, background: '#f9f9f9' }} value={formData.customer_id} readOnly />
+            <Field label="Customer ID *">
+              <input style={{ ...inputStyle, background: '#f9f9f9' }} value={formData.customer_id} readOnly required />
             </Field>
             <Field label="Name *">
               <input style={inputStyle} value={formData.name} onChange={(e) => setFormData((p) => ({ ...p, name: e.target.value }))} required />
             </Field>
-            <Field label="Address">
-              <input style={inputStyle} value={formData.address} onChange={(e) => setFormData((p) => ({ ...p, address: e.target.value }))} />
+            <Field label="Contact *">
+              <input style={inputStyle} value={formData.contact} onChange={handleContactChange} required placeholder="03XX-XXXXXXX" />
             </Field>
-            <Field label="Area" wide>
-              <textarea style={textareaStyle} value={formData.area} onChange={(e) => setFormData((p) => ({ ...p, area: e.target.value }))} placeholder="Delivery area details" />
+            <Field label="Alt Contact *">
+              <input style={inputStyle} value={formData.alt_contact} onChange={(e) => setFormData((p) => ({ ...p, alt_contact: e.target.value }))} placeholder="03XX-XXXXXXX" required />
+            </Field>
+            <Field label="Area *">
+              <input style={inputStyle} value={formData.area} onChange={(e) => setFormData((p) => ({ ...p, area: e.target.value }))} placeholder="Delivery area" required />
+            </Field>
+          </div>
+          <div style={{ marginTop: '14px' }}>
+            <Field label="Address *" wide>
+              <textarea style={textareaStyle} value={formData.address} onChange={(e) => setFormData((p) => ({ ...p, address: e.target.value }))} placeholder="Full delivery address" required />
             </Field>
           </div>
         </div>
@@ -280,7 +333,7 @@ const NewOrder = () => {
                 </select>
                 {weightMode === 'custom' && (
                   <input type="number" min="0.1" step="0.1" style={{ ...inputStyle, flex: 1 }} value={weightCustom}
-                    onChange={handleWeightCustomChange} placeholder="Enter KG" />
+                    onChange={handleWeightCustomChange} placeholder="Enter KG" required />
                 )}
               </div>
             </Field>
@@ -293,15 +346,15 @@ const NewOrder = () => {
                 </select>
                 {quantityMode === 'custom' && (
                   <input type="number" min="1" style={{ ...inputStyle, flex: 1 }} value={quantityCustom}
-                    onChange={handleQuantityCustomChange} placeholder="Qty" />
+                    onChange={handleQuantityCustomChange} placeholder="Qty" required />
                 )}
               </div>
             </Field>
-            <Field label="Total Amount (PKR)">
-              <input type="number" min="0" style={inputStyle} value={formData.total_amount} onChange={(e) => setFormData((p) => ({ ...p, total_amount: e.target.value }))} />
+            <Field label="Total Amount (PKR) *">
+              <input type="number" min="0" style={inputStyle} value={formData.total_amount} onChange={(e) => setFormData((p) => ({ ...p, total_amount: e.target.value }))} required />
             </Field>
-            <Field label="Source">
-              <select style={inputStyle} value={formData.source} onChange={(e) => setFormData((p) => ({ ...p, source: e.target.value }))}>
+            <Field label="Source *">
+              <select style={inputStyle} value={formData.source} onChange={(e) => setFormData((p) => ({ ...p, source: e.target.value }))} required>
                 <option value="">Select source</option>
                 {ORDER_SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>

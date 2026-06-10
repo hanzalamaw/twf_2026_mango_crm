@@ -51,12 +51,12 @@ CREATE TABLE IF NOT EXISTS `roles` (
   PRIMARY KEY (`role_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-INSERT INTO `roles` (`role_id`, `role_name`, `control_management`, `booking_management`, `accounting_and_finance`, `performance_management`) VALUES
-(1, 'Super Admin', 1, 1, 1, 1),
-(2, 'Admin', 0, 1, 1, 1),
-(3, 'Manager - Bookings', 0, 1, 0, 0),
-(4, 'Staff - Bookings', 0, 1, 0, 0),
-(5, 'Co-Manager - Bookings', 0, 1, 0, 0);
+INSERT INTO `roles` (`role_id`, `role_name`, `control_management`, `booking_management`, `operation_management`, `operation_rider_management`, `operation_deliveries_management`, `accounting_and_finance`, `performance_management`) VALUES
+(1, 'Super Admin', 1, 1, 1, 1, 1, 1, 1),
+(2, 'Admin', 0, 1, 1, 1, 1, 1, 1),
+(3, 'Manager - Bookings', 0, 1, 0, 0, 0, 0, 0),
+(4, 'Staff - Bookings', 0, 1, 0, 0, 0, 0, 0),
+(5, 'Co-Manager - Bookings', 0, 1, 0, 0, 0, 0, 0);
 
 -- --------------------------------------------------------
 -- users
@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `order_id` varchar(50) NOT NULL,
   `customer_id` varchar(50) DEFAULT NULL,
   `contact` varchar(20) DEFAULT NULL,
+  `alt_contact` varchar(20) DEFAULT NULL,
   `order_type` varchar(50) DEFAULT NULL,
   `name` varchar(100) DEFAULT NULL,
   `address` text DEFAULT NULL,
@@ -157,12 +158,63 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `description` text DEFAULT NULL,
   `delivery_status` varchar(50) DEFAULT 'Pending',
   `batch` varchar(50) DEFAULT NULL,
+  `rider_id` int(11) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`order_id`),
   KEY `idx_orders_customer` (`customer_id`),
   KEY `idx_orders_contact` (`contact`),
   KEY `idx_orders_batch` (`batch`),
+  KEY `idx_orders_rider_id` (`rider_id`),
   KEY `idx_orders_booking_date` (`booking_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- riders (Operations)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `riders` (
+  `rider_id` int(11) NOT NULL AUTO_INCREMENT,
+  `rider_name` varchar(100) NOT NULL,
+  `contact` varchar(20) DEFAULT NULL,
+  `vehicle` varchar(50) DEFAULT NULL,
+  `cnic` varchar(20) DEFAULT NULL,
+  `number_plate` varchar(20) DEFAULT NULL,
+  `amount_per_delivery` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `total_paid` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `availability` varchar(50) NOT NULL DEFAULT 'Available',
+  `status` varchar(20) NOT NULL DEFAULT 'active',
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`rider_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- challan (batch + address grouping)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `challan` (
+  `challan_id` int(11) NOT NULL AUTO_INCREMENT,
+  `batch` varchar(50) NOT NULL,
+  `qr_token` varchar(64) NOT NULL,
+  `address` text DEFAULT NULL,
+  `address_norm` varchar(500) DEFAULT NULL,
+  `area` varchar(100) DEFAULT NULL,
+  `names` text DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `total_quantity` int(11) NOT NULL DEFAULT 0,
+  `total_weight` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `challan_date` date DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`challan_id`),
+  UNIQUE KEY `qr_token` (`qr_token`),
+  KEY `idx_challan_batch` (`batch`),
+  KEY `idx_challan_batch_addr` (`batch`, `address_norm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `challan_orders` (
+  `challan_id` int(11) NOT NULL,
+  `order_id` varchar(50) NOT NULL,
+  PRIMARY KEY (`order_id`),
+  KEY `challan_id` (`challan_id`),
+  CONSTRAINT `challan_orders_challan_fk` FOREIGN KEY (`challan_id`) REFERENCES `challan` (`challan_id`) ON DELETE CASCADE,
+  CONSTRAINT `challan_orders_order_fk` FOREIGN KEY (`order_id`) REFERENCES `orders` (`order_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -172,6 +224,7 @@ CREATE TABLE IF NOT EXISTS `cancelled_orders` (
   `id` varchar(50) NOT NULL,
   `customer_id` varchar(50) DEFAULT NULL,
   `contact` varchar(20) DEFAULT NULL,
+  `alt_contact` varchar(20) DEFAULT NULL,
   `order_type` varchar(50) DEFAULT NULL,
   `name` varchar(100) DEFAULT NULL,
   `address` text DEFAULT NULL,

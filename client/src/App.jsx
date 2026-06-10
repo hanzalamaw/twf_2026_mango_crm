@@ -22,6 +22,10 @@ import Expenses from './pages/Expenses';
 import NewOrder from './pages/NewOrder';
 import BatchManagement from './pages/BatchManagement';
 import Stats from './pages/Stats';
+import Operations from './pages/Operations';
+import OperationsLayout from './pages/OperationsLayout';
+import OperationsRiders from './pages/OperationsRiders';
+import OperationsDeliveries from './pages/OperationsDeliveries';
 import { API_BASE } from './config/api';
 
 const ProtectedRoute = ({ children }) => {
@@ -70,6 +74,28 @@ const BookingsIndexRedirect = () => {
   const { user } = useAuth();
   return <Navigate to={bookingDefaultPath(user?.role)} replace />;
 };
+
+function hasOperationsShellAccess(permissions) {
+  const p = permissions || {};
+  return !!(p.operation_management || p.operation_rider_management || p.operation_deliveries_management);
+}
+
+const RequireOperationsShell = ({ children }) => {
+  const { user } = useAuth();
+  if (!hasOperationsShellAccess(user?.permissions)) return <Navigate to="/" replace />;
+  return children;
+};
+
+const RequireOperationSub = ({ permission, children }) => {
+  const { user } = useAuth();
+  if (!hasOperationsShellAccess(user?.permissions)) return <Navigate to="/" replace />;
+  if (!user?.permissions?.[permission]) return <Navigate to="/operations" replace />;
+  return children;
+};
+
+const OperationsMainLayout = () => (
+  <MainLayout showSidebar={false} systemName="Operations Management" />
+);
 
 const RequireBookingRoleAccess = ({ children }) => {
   const { user } = useAuth();
@@ -139,6 +165,9 @@ const ROUTE_TITLES = {
   '/bookings/orders': 'Order Management',
   '/bookings/transactions': 'Transactions',
   '/bookings/expenses': 'Expenses',
+  '/operations': 'Operations Management',
+  '/operations/riders': 'Rider Management',
+  '/operations/deliveries': 'Deliveries Management',
   '/accounting': 'Accounting & Finance',
   '/accounting/dashboard': 'Accounting Dashboard',
   '/accounting/transactions': 'Transactions',
@@ -189,6 +218,14 @@ function App() {
             <Route path="orders" element={<RequireBookingRoleAccess><OrderManagement /></RequireBookingRoleAccess>} />
             <Route path="transactions" element={<RequireBookingRoleAccess><Transactions /></RequireBookingRoleAccess>} />
             <Route path="expenses" element={<RequireBookingRoleAccess><Expenses /></RequireBookingRoleAccess>} />
+          </Route>
+
+          <Route path="/operations" element={<ProtectedRoute><RequireOperationsShell><OperationsMainLayout /></RequireOperationsShell></ProtectedRoute>}>
+            <Route element={<OperationsLayout />}>
+              <Route index element={<Operations />} />
+              <Route path="riders" element={<RequireOperationSub permission="operation_rider_management"><OperationsRiders /></RequireOperationSub>} />
+              <Route path="deliveries" element={<RequireOperationSub permission="operation_deliveries_management"><OperationsDeliveries /></RequireOperationSub>} />
+            </Route>
           </Route>
 
           <Route path="/accounting" element={<ProtectedRoute><RequirePermission permission="accounting_and_finance"><MainLayout systemName="Accounting & Finance" /></RequirePermission></ProtectedRoute>}>

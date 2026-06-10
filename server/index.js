@@ -21,6 +21,7 @@ import { sendLoginNotificationEmail } from "./utils/email.js";
 import { ensurePasswordResetTable } from "./utils/ensurePasswordResetTable.js";
 import { registerBatchRoutes } from "./routes/batchRoutes.js";
 import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardRoutes.js";
+import { registerOperationsRoutes } from "./routes/operationsRoutes.js";
 
 dotenv.config();
 
@@ -239,6 +240,7 @@ const startServer = async () => {
     registerAccountingDashboardRoutes(app, db, verifyToken);
     registerPerformanceRoutes(app, db, verifyToken);
     registerAccountingRoutes(app, db, verifyToken);
+    registerOperationsRoutes(app, db, verifyToken);
 
     app.use((req, res) => res.status(404).json({ message: `Not Found - ${req.path}` }));
 

@@ -12,6 +12,7 @@ const COLUMNS = [
   { key: 'order_id',        label: 'Order ID'        },
   { key: 'name',            label: 'Name'            },
   { key: 'phone_number',    label: 'Contact'         },
+  { key: 'alt_contact',     label: 'Alt Contact'     },
   { key: 'type',            label: 'Type'            },
   { key: 'address',         label: 'Address'         },
   { key: 'area',            label: 'Area'            },
@@ -37,6 +38,7 @@ const EDIT_LABELS = {
   customer_id: 'Customer ID',
   name: 'Name',
   phone_number: 'Contact',
+  alt_contact: 'Alt Contact',
   address: 'Address',
   area: 'Area',
   type: 'Type',
@@ -81,14 +83,14 @@ function StatusPill({ status }) {
 }
 
 const defaultEditRow = () => ({
-  order_id: '', customer_id: '', name: '', phone_number: '',
+  order_id: '', customer_id: '', name: '', phone_number: '', alt_contact: '',
   address: '', area: '', type: '', weight: '', quantity: '', batch: '',
   booking_date: '', total_amount: '', received: '', pending: '',
   source: '', delivery_status: 'Pending', description: '',
 });
 
 const EDIT_FIELD_KEYS = [
-  'order_id', 'customer_id', 'name', 'phone_number',
+  'order_id', 'customer_id', 'name', 'phone_number', 'alt_contact',
   'address', 'area', 'type', 'weight', 'quantity', 'batch',
   'booking_date', 'total_amount', 'received', 'pending', 'source',
 ];
@@ -220,6 +222,7 @@ export default function OrderManagement() {
       customer_id: row.customer_id ?? '',
       name: row.name ?? '',
       phone_number: row.phone_number ?? '',
+      alt_contact: row.alt_contact ?? '',
       address: row.address ?? '',
       area: row.area ?? '',
       type: row.type ?? '',
@@ -554,7 +557,7 @@ export default function OrderManagement() {
 
         <div className="om-filter-desktop" style={{ display: 'flex', flexWrap: 'nowrap', gap: '10px', marginBottom: '16px', alignItems: 'flex-end', overflowX: 'auto', minWidth: 0, flexShrink: 0 }}>
           <div style={{ flex: '1 1 180px', minWidth: 0 }}>
-            <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Search (name, phone, area, address)</label>
+            <label style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Search (name, phone, alt contact, area, address)</label>
             <input type="text" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchOrders()} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 10px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
           </div>
           {filterSelects.map(({ label, val, set, opts, w }) => (

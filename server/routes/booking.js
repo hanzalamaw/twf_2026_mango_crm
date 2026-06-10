@@ -3,6 +3,14 @@ import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
 import { limitOffsetClause } from "../utils/sqlPagination.js";
 import { buildBatchReceivedYearWhere, buildOrderBatchFilter, buildOrderYearWhere } from "../utils/yearFilter.js";
+import {
+  assignOrderToChallan,
+  normalizeAddress,
+  relinkOrderToChallan,
+  refreshLinkedChallanForOrder,
+  removeOrderFromChallan,
+} from "../utils/challanAssign.js";
+import { qualifiesForOperations } from "../utils/operationsYear.js";
 
 /** Normalize to date-only YYYY-MM-DD for consistent display and audit (avoids timezone shift). */
 function toDateOnly(v) {
@@ -206,6 +214,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         order_id,
         customer_id,
         contact,
+        alt_contact,
         order_type,
         name,
         address,
@@ -245,14 +254,15 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       await db.execute(
         `INSERT INTO orders (
-          order_id, customer_id, contact, order_type, name, address, area,
+          order_id, customer_id, contact, alt_contact, order_type, name, address, area,
           weight, quantity, booking_date, total_amount, received_amount, pending_amount,
           source, description, batch
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           order_id,
           customer_id,
           contact,
+          alt_contact || null,
           String(order_type).trim(),
           name || null,
           address || null,
@@ -278,6 +288,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           order_id,
           customer_id,
           contact,
+          alt_contact: alt_contact || null,
           order_type: String(order_type).trim(),
           name: name || null,
           address: address || null,
@@ -293,6 +304,19 @@ export function registerBookingRoutes(app, db, verifyToken) {
         ip_address: req.ip,
         user_agent: req.get("user-agent"),
       });
+
+      try {
+        await assignOrderToChallan(db, {
+          order_id,
+          booking_date: booking_date ? toDateOnly(booking_date) : null,
+          batch: batch || null,
+          address: address || null,
+          area: area || null,
+          name: name || null,
+        });
+      } catch (challanErr) {
+        logError("BOOKING", "Challan auto-assign on create", challanErr);
+      }
 
       log("BOOKING", "Order created", { user_id: req.userId, order_id });
       res.json({ message: "Order created successfully", order_id });
@@ -332,10 +356,10 @@ export function registerBookingRoutes(app, db, verifyToken) {
         const term = `%${search.trim()}%`;
         conditions.push(`(
           o.order_id LIKE ? OR o.customer_id LIKE ? OR
-          o.name LIKE ? OR o.contact LIKE ? OR
+          o.name LIKE ? OR o.contact LIKE ? OR o.alt_contact LIKE ? OR
           o.area LIKE ? OR o.address LIKE ? OR o.batch LIKE ?
         )`);
-        params.push(term, term, term, term, term, term, term);
+        params.push(term, term, term, term, term, term, term, term);
       }
 
       const orderTypesRaw = Array.isArray(order_type) ? order_type : order_type ? [order_type] : [];
@@ -392,6 +416,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           o.order_id AS order_id,
           o.name AS name,
           o.contact AS phone_number,
+          o.alt_contact AS alt_contact,
           o.address AS address,
           o.area AS area,
           o.order_type AS type,
@@ -924,7 +949,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const body = req.body;
 
       const [oldRows] = await db.execute(
-        `SELECT customer_id, name, contact AS phone_number, address, area, order_type AS type,
+        `SELECT customer_id, name, contact AS phone_number, alt_contact, address, area, order_type AS type,
                 weight, quantity, batch, booking_date, total_amount, received_amount AS received,
                 pending_amount AS pending, source, delivery_status, description
          FROM orders WHERE order_id = ?`,
@@ -951,6 +976,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         customer_id: "customer_id",
         name: "name",
         phone_number: "contact",
+        alt_contact: "alt_contact",
         address: "address",
         area: "area",
         type: "order_type",
@@ -982,6 +1008,27 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       params.push(orderId);
       await db.execute(`UPDATE orders SET ${updates.join(", ")} WHERE order_id = ?`, params);
+
+      const [updatedRows] = await db.execute(
+        `SELECT order_id, booking_date, batch, address, area, name
+         FROM orders WHERE order_id = ?`,
+        [orderId]
+      );
+      const updated = updatedRows[0];
+      if (updated && rawOld) {
+        const addressChanged =
+          body.address !== undefined &&
+          normalizeAddress(body.address) !== normalizeAddress(rawOld.address);
+        const batchChanged =
+          body.batch !== undefined &&
+          String(body.batch || "").trim() !== String(rawOld.batch || "").trim();
+
+        if (addressChanged || batchChanged) {
+          await relinkOrderToChallan(db, updated);
+        } else if (qualifiesForOperations(updated)) {
+          await refreshLinkedChallanForOrder(db, orderId);
+        }
+      }
 
       await writeAuditLog(db, {
         user_id: req.userId,
@@ -1015,7 +1062,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
     try {
       const { orderId } = req.params;
       const [rows] = await db.execute(
-        `SELECT customer_id, contact, order_type, name, address, area, weight, quantity,
+        `SELECT customer_id, contact, alt_contact, order_type, name, address, area, weight, quantity,
                 booking_date, total_amount, source, description, batch
          FROM orders WHERE order_id = ?`,
         [orderId]
@@ -1032,13 +1079,14 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       await db.execute(
         `INSERT INTO cancelled_orders (
-          id, customer_id, contact, order_type, name, address, area, weight, quantity,
+          id, customer_id, contact, alt_contact, order_type, name, address, area, weight, quantity,
           booking_date, total_amount, source, description, batch
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           cancelId,
           o.customer_id,
           o.contact,
+          o.alt_contact,
           o.order_type,
           o.name,
           o.address,
@@ -1052,6 +1100,12 @@ export function registerBookingRoutes(app, db, verifyToken) {
           o.batch,
         ]
       );
+
+      try {
+        await removeOrderFromChallan(db, orderId);
+      } catch (challanErr) {
+        logError("BOOKING", "Challan remove on cancel", challanErr);
+      }
 
       await db.execute("DELETE FROM payments WHERE order_id = ?", [orderId]);
       await db.execute("DELETE FROM orders WHERE order_id = ?", [orderId]);

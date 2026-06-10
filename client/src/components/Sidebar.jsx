@@ -15,6 +15,11 @@ const ControlIcon = () => (
     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
   </svg>
 );
+const OperationsIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+  </svg>
+);
 const BookingsIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -54,6 +59,7 @@ const MENU_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard', managersOnly: true },
   { id: 'control', label: 'Control Management', icon: <ControlIcon />, path: '/control', permission: 'control_management' },
   { id: 'bookings', label: 'Bookings Management', icon: <BookingsIcon />, path: '/bookings', permission: 'booking_management' },
+  { id: 'operations', label: 'Operations Management', icon: <OperationsIcon />, path: '/operations', permission: 'operation_management' },
   { id: 'accounting', label: 'Accounting & Finance', icon: <AccountingIcon />, path: '/accounting', permission: 'accounting_and_finance' },
   { id: 'performance', label: 'Performance Management', icon: <PerformanceIcon />, path: '/performance', permission: 'performance_management' },
 ];
@@ -69,6 +75,11 @@ const BOOKING_MENU_ITEMS = [
   { id: 'bm-orders', label: 'Order Management', iconDefault: '/icons/order_management_default.png', iconActive: '/icons/order_management_active.png', path: '/bookings/orders', permission: 'booking_management' },
   { id: 'bm-transactions', label: 'Transactions', iconDefault: '/icons/transactions_default.png', iconActive: '/icons/transactions_active.png', path: '/bookings/transactions', permission: 'booking_management' },
   { id: 'bm-batches', label: 'Batch Management', iconDefault: '/icons/batch_management_default.png', iconActive: '/icons/batch_management_active.png', path: '/bookings/batches', permission: 'booking_management', managersOnly: true },
+];
+
+const OPERATIONS_MENU_ITEMS = [
+  { id: 'op-riders', label: 'Rider Management', icon: <OperationsIcon />, path: '/operations/riders', permission: 'operation_rider_management' },
+  { id: 'op-deliveries', label: 'Deliveries Management', icon: <OperationsIcon />, path: '/operations/deliveries', permission: 'operation_deliveries_management' },
 ];
 
 const ACCOUNTING_MENU_ITEMS = [
@@ -99,14 +110,16 @@ function Sidebar() {
   const roleId = user?.role_id;
   const isManager = [3, 5, 7].includes(roleId);
   const isBookingContext = location.pathname.startsWith('/bookings');
+  const isOperationsContext = location.pathname.startsWith('/operations');
   const isPerformanceContext = location.pathname.startsWith('/performance');
   const isAccountingContext = location.pathname.startsWith('/accounting');
   const isAdminOrManager = [1, 2, 3, 5, 7].includes(roleId);
   const roleName = user?.role;
 
-  const moduleSidebarChrome = location.pathname === '/dashboard' || /^\/(bookings|accounting|performance)(\/|$)/.test(location.pathname);
+  const moduleSidebarChrome = location.pathname === '/dashboard' || /^\/(bookings|operations|accounting|performance)(\/|$)/.test(location.pathname);
 
   const items = isBookingContext ? BOOKING_MENU_ITEMS
+    : isOperationsContext ? OPERATIONS_MENU_ITEMS
     : isPerformanceContext ? PERFORMANCE_MENU_ITEMS
     : isAccountingContext ? ACCOUNTING_MENU_ITEMS
     : MENU_ITEMS;

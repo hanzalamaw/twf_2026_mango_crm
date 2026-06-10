@@ -32,6 +32,16 @@ const OPTIONS = [
     soft: '#FFF3E0',
   },
   {
+    id: 'operations',
+    name: 'Operations Management',
+    path: '/operations',
+    permission: 'operation_management',
+    emoji: '🚚',
+    desc: 'Riders & deliveries',
+    accent: '#D84315',
+    soft: '#FBE9E7',
+  },
+  {
     id: 'accounting',
     name: 'Accounting & Finance',
     path: '/accounting',
