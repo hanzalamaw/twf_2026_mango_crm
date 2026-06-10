@@ -25,6 +25,8 @@ server/dist/
 .env.local
 .env.development
 .env.production
+.env.build
+.env.example
 
 # Google / API secrets (never commit)
 server/config/credentials-for-twf-crm-drive-uploads.json
