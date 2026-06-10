@@ -21,7 +21,8 @@ const COLUMNS = [
   { key: 'batch',           label: 'Batch'           },
   { key: 'booking_date',    label: 'Booking Date'    },
   { key: 'total_amount',    label: 'Total Amount'    },
-  { key: 'bank',            label: 'Bank'            },
+  { key: 'bank',            label: 'Bank (TWF)'            },
+  { key: 'bank_tw_traders', label: 'Bank (TW Traders)'     },
   { key: 'cash',            label: 'Cash'            },
   { key: 'received',        label: 'Received'        },
   { key: 'pending',         label: 'Pending'         },
@@ -31,7 +32,7 @@ const COLUMNS = [
   { key: 'payment_status',  label: 'Payment Status'  },
 ];
 
-const AMOUNT_KEYS = ['total_amount', 'bank', 'cash', 'received', 'pending'];
+const AMOUNT_KEYS = ['total_amount', 'bank', 'bank_tw_traders', 'cash', 'received', 'pending'];
 
 const EDIT_LABELS = {
   order_id: 'Order ID',
@@ -150,6 +151,7 @@ export default function OrderManagement() {
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [paymentOrder, setPaymentOrder] = useState(null);
   const [addBank, setAddBank] = useState('');
+  const [addBankTwTraders, setAddBankTwTraders] = useState('');
   const [addCash, setAddCash] = useState('');
   const [paymentErrors, setPaymentErrors] = useState({});
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -328,6 +330,7 @@ export default function OrderManagement() {
   const openPaymentModal = (order) => {
     setPaymentOrder(order);
     setAddBank('');
+    setAddBankTwTraders('');
     setAddCash('');
     setPaymentErrors({});
   };
@@ -335,33 +338,39 @@ export default function OrderManagement() {
   const getPaymentRealtimeError = () => {
     if (!paymentOrder) return null;
     const bankVal = parseFloat(addBank);
+    const bankTwVal = parseFloat(addBankTwTraders);
     const cashVal = parseFloat(addCash);
     if (!Number.isNaN(bankVal) && bankVal < 0) return 'Amount cannot be negative.';
+    if (!Number.isNaN(bankTwVal) && bankTwVal < 0) return 'Amount cannot be negative.';
     if (!Number.isNaN(cashVal) && cashVal < 0) return 'Amount cannot be negative.';
     const pendingAmount = Number(paymentOrder.pending) || 0;
     const addB = Math.max(0, Number.isNaN(bankVal) ? 0 : bankVal);
+    const addBT = Math.max(0, Number.isNaN(bankTwVal) ? 0 : bankTwVal);
     const addC = Math.max(0, Number.isNaN(cashVal) ? 0 : cashVal);
-    if (addB + addC > pendingAmount) return `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (addB + addBT + addC > pendingAmount) return `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     return null;
   };
 
   const validatePayment = () => {
     const err = {};
     const bank = parseFloat(addBank);
+    const bankTw = parseFloat(addBankTwTraders);
     const cash = parseFloat(addCash);
     const addB = Math.max(0, Number.isNaN(bank) ? 0 : bank);
+    const addBT = Math.max(0, Number.isNaN(bankTw) ? 0 : bankTw);
     const addC = Math.max(0, Number.isNaN(cash) ? 0 : cash);
     if (!Number.isNaN(bank) && bank < 0) err.addBank = 'Amount cannot be negative.';
+    if (!Number.isNaN(bankTw) && bankTw < 0) err.addBankTwTraders = 'Amount cannot be negative.';
     if (!Number.isNaN(cash) && cash < 0) err.addCash = 'Amount cannot be negative.';
-    if (addB + addC === 0) err.add = 'Enter at least one amount (Add Bank or Add Cash ≥ 0).';
+    if (addB + addBT + addC === 0) err.add = 'Enter at least one amount (Cash, Bank TWF, or Bank TW Traders ≥ 0).';
     const totalAmountVal = Number(paymentOrder?.total_amount) || 0;
     const currentReceivedVal = Number(paymentOrder?.received) || 0;
-    if (currentReceivedVal + addB + addC > totalAmountVal) {
+    if (currentReceivedVal + addB + addBT + addC > totalAmountVal) {
       err.add = err.add || `Total received cannot exceed total amount (${formatAmount(totalAmountVal)}).`;
     }
     const pendingAmount = Number(paymentOrder?.pending) || 0;
-    if (addB + addC > pendingAmount) {
-      err.add = err.add || `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (addB + addBT + addC > pendingAmount) {
+      err.add = err.add || `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     }
     setPaymentErrors(err);
     return Object.keys(err).length === 0;
@@ -371,19 +380,21 @@ export default function OrderManagement() {
     if (!paymentOrder) return;
     if (!validatePayment()) return;
     const bank = Math.max(0, parseFloat(addBank) || 0);
+    const bank_tw_traders = Math.max(0, parseFloat(addBankTwTraders) || 0);
     const cash = Math.max(0, parseFloat(addCash) || 0);
-    if (bank === 0 && cash === 0) return;
+    if (bank === 0 && bank_tw_traders === 0 && cash === 0) return;
     setSubmittingPayment(true);
     try {
       const res = await authFetch(`${API}/booking/orders/${encodeURIComponent(paymentOrder.order_id)}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bank, cash }),
+        body: JSON.stringify({ bank, bank_tw_traders, cash }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setPaymentOrder(null);
         setAddBank('');
+        setAddBankTwTraders('');
         setAddCash('');
         fetchOrders();
       } else {
@@ -466,11 +477,16 @@ export default function OrderManagement() {
   };
 
   const currentBank = paymentOrder ? Number(paymentOrder.bank) || 0 : 0;
+  const currentBankTwTraders = paymentOrder ? Number(paymentOrder.bank_tw_traders) || 0 : 0;
   const currentCash = paymentOrder ? Number(paymentOrder.cash) || 0 : 0;
   const newBank = currentBank + Math.max(0, parseFloat(addBank) || 0);
+  const newBankTwTraders = currentBankTwTraders + Math.max(0, parseFloat(addBankTwTraders) || 0);
   const newCash = currentCash + Math.max(0, parseFloat(addCash) || 0);
   const currentReceived = paymentOrder ? Number(paymentOrder.received) || 0 : 0;
-  const addTotal = Math.max(0, parseFloat(addBank) || 0) + Math.max(0, parseFloat(addCash) || 0);
+  const addTotal =
+    Math.max(0, parseFloat(addBank) || 0) +
+    Math.max(0, parseFloat(addBankTwTraders) || 0) +
+    Math.max(0, parseFloat(addCash) || 0);
   const newReceived = currentReceived + addTotal;
   const totalAmount = paymentOrder ? Number(paymentOrder.total_amount) || 0 : 0;
   const newPending = Math.max(0, totalAmount - newReceived);
@@ -770,7 +786,7 @@ export default function OrderManagement() {
           >
             <div
               className="om-modal-box"
-              style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(520px, 95vw)', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
+              style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(640px, 95vw)', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
               onClick={(e) => e.stopPropagation()}
             >
               <h3 style={{ margin: '0 0 13px 0', fontSize: '13px', fontWeight: '600' }}>Add Payment</h3>
@@ -783,42 +799,53 @@ export default function OrderManagement() {
                 <div><span style={{ color: '#666' }}>Contact</span><div style={{ fontWeight: '600' }}>{paymentOrder.phone_number ?? '—'}</div></div>
                 <div><span style={{ color: '#666' }}>Booking Date</span><div style={{ fontWeight: '600' }}>{formatDate(paymentOrder.booking_date)}</div></div>
                 <div><span style={{ color: '#666' }}>Total Amount</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.total_amount)}</div></div>
-                <div><span style={{ color: '#666' }}>Current Bank</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank_tw_traders)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Cash</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.cash)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Received</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.received)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.pending)}</div></div>
               </div>
 
-              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addCash) && (
+              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash) && (
                 <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                   {getPaymentRealtimeError()}
                   {!getPaymentRealtimeError() && paymentErrors.add}
-                  {paymentErrors.addBank && <div>Add Bank: {paymentErrors.addBank}</div>}
-                  {paymentErrors.addCash && <div>Add Cash: {paymentErrors.addCash}</div>}
+                  {paymentErrors.addBank && <div>Bank (TWF): {paymentErrors.addBank}</div>}
+                  {paymentErrors.addBankTwTraders && <div>Bank (TW Traders): {paymentErrors.addBankTwTraders}</div>}
+                  {paymentErrors.addCash && <div>Cash: {paymentErrors.addCash}</div>}
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                <div style={{ minWidth: 0 }}>
                   <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Cash</label>
                   <input
                     type="number" min="0" step="0.01" value={addCash}
-                    onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, add: undefined })); }}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addCash) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                   />
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank</label>
+                <div style={{ minWidth: 0 }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TWF)</label>
                   <input
                     type="number" min="0" step="0.01" value={addBank}
-                    onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addCash: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addCash: undefined, add: undefined })); }}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBank) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TW Traders)</label>
+                  <input
+                    type="number" min="0" step="0.01" value={addBankTwTraders}
+                    onChange={(e) => { setAddBankTwTraders(e.target.value); setPaymentErrors((p) => ({ ...p, addBankTwTraders: undefined, addBank: undefined, addCash: undefined, add: undefined })); }}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBankTwTraders) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                   />
                 </div>
               </div>
 
               <div style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
-                <div><span style={{ color: '#666' }}>New Bank Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
+                <div><span style={{ color: '#666' }}>New Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
+                <div><span style={{ color: '#666' }}>New Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankTwTraders)}</div></div>
                 <div><span style={{ color: '#666' }}>New Cash Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newCash)}</div></div>
                 <div><span style={{ color: '#666' }}>New Received Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newReceived)}</div></div>
                 <div><span style={{ color: '#666' }}>New Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(newPending)}</div></div>
@@ -829,7 +856,7 @@ export default function OrderManagement() {
                 <button
                   type="button"
                   onClick={handleSubmitPayment}
-                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
+                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
                   style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submittingPayment ? 'not-allowed' : 'pointer' }}
                 >
                   {submittingPayment ? 'Submitting...' : 'Submit'}

@@ -10,14 +10,15 @@ const ORDER_COLUMNS = [
   { key: 'phone_number', label: 'Phone' },
   { key: 'batch', label: 'Batch' },
   { key: 'total_amount', label: 'Total Amount' },
-  { key: 'bank', label: 'Bank' },
+  { key: 'bank', label: 'Bank (TWF)' },
+  { key: 'bank_tw_traders', label: 'Bank (TW Traders)' },
   { key: 'cash', label: 'Cash' },
   { key: 'received', label: 'Received' },
   { key: 'pending', label: 'Pending' },
   { key: 'payment_status', label: 'Status' },
 ];
 
-const AMOUNT_KEYS = ['total_amount', 'bank', 'cash', 'received', 'pending'];
+const AMOUNT_KEYS = ['total_amount', 'bank', 'bank_tw_traders', 'cash', 'received', 'pending'];
 
 const TYPE_COLORS = {
   'Hissa - Premium':  { bg: '#fff4f0', color: '#FF5722' },
@@ -102,6 +103,7 @@ export default function Transactions() {
   const [filterMode, setFilterMode] = useState('onHand');
   const [modalOrder, setModalOrder] = useState(null);
   const [addBank, setAddBank] = useState('');
+  const [addBankTwTraders, setAddBankTwTraders] = useState('');
   const [addCash, setAddCash] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [paymentErrors, setPaymentErrors] = useState({});
@@ -218,6 +220,7 @@ export default function Transactions() {
   const openModal = (order) => {
     setModalOrder(order);
     setAddBank('');
+    setAddBankTwTraders('');
     setAddCash('');
     setPaymentErrors({});
   };
@@ -270,7 +273,7 @@ export default function Transactions() {
       }
 
       const headers = activeColumns.map((c) => c.label);
-      const amountKeys = ['total_amount', 'bank', 'cash', 'received', 'pending'];
+      const amountKeys = AMOUNT_KEYS;
       const rows = toExport.map((row) =>
         activeColumns.map((col) => {
           const val = row[col.key];
@@ -297,31 +300,37 @@ export default function Transactions() {
   const getPaymentRealtimeError = useCallback(() => {
     if (!modalOrder) return null;
     const bankVal = parseFloat(addBank);
+    const bankTwVal = parseFloat(addBankTwTraders);
     const cashVal = parseFloat(addCash);
     if (!Number.isNaN(bankVal) && bankVal < 0) return 'Amount cannot be negative.';
+    if (!Number.isNaN(bankTwVal) && bankTwVal < 0) return 'Amount cannot be negative.';
     if (!Number.isNaN(cashVal) && cashVal < 0) return 'Amount cannot be negative.';
     const pendingAmount = Number(modalOrder.pending) || 0;
     const addB = Math.max(0, Number.isNaN(bankVal) ? 0 : bankVal);
+    const addBT = Math.max(0, Number.isNaN(bankTwVal) ? 0 : bankTwVal);
     const addC = Math.max(0, Number.isNaN(cashVal) ? 0 : cashVal);
-    if (addB + addC > pendingAmount) return `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (addB + addBT + addC > pendingAmount) return `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     return null;
-  }, [modalOrder, addBank, addCash]);
+  }, [modalOrder, addBank, addBankTwTraders, addCash]);
 
   const validatePayment = () => {
     const err = {};
     const bank = parseFloat(addBank);
+    const bankTw = parseFloat(addBankTwTraders);
     const cash = parseFloat(addCash);
     const addB = Math.max(0, Number.isNaN(bank) ? 0 : bank);
+    const addBT = Math.max(0, Number.isNaN(bankTw) ? 0 : bankTw);
     const addC = Math.max(0, Number.isNaN(cash) ? 0 : cash);
     if (!Number.isNaN(bank) && bank < 0) err.addBank = 'Amount cannot be negative.';
+    if (!Number.isNaN(bankTw) && bankTw < 0) err.addBankTwTraders = 'Amount cannot be negative.';
     if (!Number.isNaN(cash) && cash < 0) err.addCash = 'Amount cannot be negative.';
-    if (addB + addC === 0) err.add = 'Enter at least one amount (Add Bank or Add Cash ≥ 0).';
+    if (addB + addBT + addC === 0) err.add = 'Enter at least one amount (Cash, Bank TWF, or Bank TW Traders ≥ 0).';
     const totalAmountVal = Number(modalOrder?.total_amount) || 0;
     const currentReceivedVal = Number(modalOrder?.received) || 0;
-    const newReceivedVal = currentReceivedVal + addB + addC;
+    const newReceivedVal = currentReceivedVal + addB + addBT + addC;
     if (newReceivedVal > totalAmountVal) err.add = err.add || `Total received cannot exceed total amount (${formatAmount(totalAmountVal)}).`;
     const pendingAmount = Number(modalOrder?.pending) || 0;
-    if (addB + addC > pendingAmount) err.add = err.add || `Total added (Bank + Cash) cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (addB + addBT + addC > pendingAmount) err.add = err.add || `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     setPaymentErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -330,19 +339,21 @@ export default function Transactions() {
     if (!modalOrder) return;
     if (!validatePayment()) return;
     const bank = Math.max(0, parseFloat(addBank) || 0);
+    const bank_tw_traders = Math.max(0, parseFloat(addBankTwTraders) || 0);
     const cash = Math.max(0, parseFloat(addCash) || 0);
-    if (bank === 0 && cash === 0) return;
+    if (bank === 0 && bank_tw_traders === 0 && cash === 0) return;
     setSubmitting(true);
     try {
       const res = await fetch(`${API}/booking/orders/${encodeURIComponent(modalOrder.order_id)}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ bank, cash }),
+        body: JSON.stringify({ bank, bank_tw_traders, cash }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setModalOrder(null);
         setAddBank('');
+        setAddBankTwTraders('');
         setAddCash('');
         fetchSummary();
         fetchOrders();
@@ -375,17 +386,24 @@ export default function Transactions() {
   const totalExpensesBank = Number(s.totalExpensesBank) ?? 0;
   const totalExpensesCash = Number(s.totalExpensesCash) ?? 0;
   const os = ordersSummary || {};
-  const fullDataTotalBank = Number(os.totalBank) ?? 0;
+  const fullDataTotalBank = os.totalBank != null
+    ? Number(os.totalBank)
+    : Number(os.totalBankTwf ?? 0) + Number(os.totalBankTwTraders ?? 0);
   const fullDataTotalCash = Number(os.totalCash) ?? 0;
-  const bankOnlyAmount = effectiveFilterMode === 'onHand' ? fullDataTotalBank - totalExpensesBank : fullDataTotalBank;
+  const bankTotalAmount = effectiveFilterMode === 'onHand' ? fullDataTotalBank - totalExpensesBank : fullDataTotalBank;
   const cashAmount = effectiveFilterMode === 'onHand' ? fullDataTotalCash - totalExpensesCash : fullDataTotalCash;
 
   const currentBank = modalOrder ? Number(modalOrder.bank) || 0 : 0;
+  const currentBankTwTraders = modalOrder ? Number(modalOrder.bank_tw_traders) || 0 : 0;
   const currentCash = modalOrder ? Number(modalOrder.cash) || 0 : 0;
   const newBank = currentBank + Math.max(0, parseFloat(addBank) || 0);
+  const newBankTwTraders = currentBankTwTraders + Math.max(0, parseFloat(addBankTwTraders) || 0);
   const newCash = currentCash + Math.max(0, parseFloat(addCash) || 0);
   const currentReceived = modalOrder ? Number(modalOrder.received) || 0 : 0;
-  const addTotal = Math.max(0, parseFloat(addBank) || 0) + Math.max(0, parseFloat(addCash) || 0);
+  const addTotal =
+    Math.max(0, parseFloat(addBank) || 0) +
+    Math.max(0, parseFloat(addBankTwTraders) || 0) +
+    Math.max(0, parseFloat(addCash) || 0);
   const newReceived = currentReceived + addTotal;
   const totalAmount = modalOrder ? Number(modalOrder.total_amount) || 0 : 0;
   const newPending = Math.max(0, totalAmount - newReceived);
@@ -461,7 +479,8 @@ export default function Transactions() {
             animation: modalSheetInUp 0.38s cubic-bezier(0.25, 0.8, 0.25, 1) both !important;
           }
           .txn-modal-grid       { grid-template-columns: 1fr 1fr !important; gap: 8px 12px !important; font-size: 12px !important; }
-          .txn-modal-input-grid { grid-template-columns: 1fr 1fr !important; gap: 10px !important; }
+          .txn-modal-input-grid { grid-template-columns: 1fr 1fr 1fr !important; gap: 8px !important; }
+          .txn-modal-input-grid label { font-size: 10px !important; }
           .txn-modal-summary    { grid-template-columns: 1fr 1fr !important; }
           .txn-modal-actions    { gap: 10px !important; }
           .txn-modal-actions button { flex: 1 !important; padding: 13px !important; font-size: 13px !important; border-radius: 10px !important; }
@@ -675,17 +694,17 @@ export default function Transactions() {
 
       {/* ── Summary cards ── */}
       <div className="txn-cards" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px', flexShrink: 0 }}>
-        {/* Bank Only card */}
+        {/* Bank Total card (TWF + TW Traders) */}
         <div className="txn-card" style={{ flex: '1 1 160px', minWidth: '160px', padding: '14px 12px', borderRadius: '10px', border: '1px solid #f1f1f1', background: '#fff', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
           <div className="txn-card-icon-wrap" style={{ width: '64px', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <img src="/icons/total_orders_amount.png" alt="" style={{ width: '50px', height: '50px', objectFit: 'contain' }} />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px' }}>
-            <div className="txn-card-label" style={{ fontSize: '11px', fontWeight: '400', color: '#6b7280' }}>Bank Only</div>
+            <div className="txn-card-label" style={{ fontSize: '11px', fontWeight: '400', color: '#6b7280' }}>Bank Total</div>
             <div className="txn-card-amount" style={{ fontSize: '18px', fontWeight: '600', color: '#111827', lineHeight: '1.2' }}>
               {amountVisible
-                ? <span>{formatAmount(bankOnlyAmount)}</span>
-                : <span style={{ filter: 'blur(6px)', userSelect: 'none', display: 'inline-block', minWidth: '120px', background: 'rgba(0,0,0,0.03)', borderRadius: '10px', padding: '6px 10px' }}>{formatAmount(bankOnlyAmount)}</span>}
+                ? <span>{formatAmount(bankTotalAmount)}</span>
+                : <span style={{ filter: 'blur(6px)', userSelect: 'none', display: 'inline-block', minWidth: '120px', background: 'rgba(0,0,0,0.03)', borderRadius: '10px', padding: '6px 10px' }}>{formatAmount(bankTotalAmount)}</span>}
             </div>
           </div>
         </div>
@@ -802,7 +821,7 @@ export default function Transactions() {
                       key={col.key}
                       style={{
                         padding: '10px 8px',
-                        textAlign: ['total_amount', 'bank', 'cash', 'received', 'pending'].includes(col.key) ? 'right' : 'left',
+                        textAlign: AMOUNT_KEYS.includes(col.key) ? 'right' : 'left',
                         fontWeight: '600',
                         color: '#333',
                         borderBottom: '2px solid #e0e0e0',
@@ -846,13 +865,13 @@ export default function Transactions() {
                           key={col.key}
                           style={{
                             padding: '8px',
-                            textAlign: ['total_amount', 'bank', 'cash', 'received', 'pending'].includes(col.key) ? 'right' : 'left',
+                            textAlign: AMOUNT_KEYS.includes(col.key) ? 'right' : 'left',
                             whiteSpace: 'nowrap',
                           }}
                         >
                           {col.key === 'payment_status' ? (
                             <StatusPill status={row[col.key]} />
-                          ) : ['total_amount', 'bank', 'cash', 'received', 'pending'].includes(col.key) ? (
+                          ) : AMOUNT_KEYS.includes(col.key) ? (
                             formatAmount(row[col.key])
                           ) : (
                             row[col.key] != null ? String(row[col.key]) : '—'
@@ -923,7 +942,7 @@ export default function Transactions() {
         >
           <div
             className="txn-modal-box"
-            style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(520px, 95vw)', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
+            style={{ background: '#fff', borderRadius: '12px', padding: '16px 20px', width: 'min(640px, 95vw)', maxHeight: '88vh', overflowY: 'auto', boxShadow: '0 10px 40px rgba(0,0,0,0.2)' }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="txn-drag-handle" style={{ display: 'none', width: '40px', height: '4px', background: '#e0e0e0', borderRadius: '2px', margin: '0 auto 16px' }} />
@@ -938,42 +957,53 @@ export default function Transactions() {
               <div><span style={{ color: '#666' }}>Contact</span><div style={{ fontWeight: '600' }}>{modalOrder.phone_number ?? '—'}</div></div>
               <div><span style={{ color: '#666' }}>Booking Date</span><div style={{ fontWeight: '600' }}>{formatDate(modalOrder.booking_date)}</div></div>
               <div><span style={{ color: '#666' }}>Total Price</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.total_amount)}</div></div>
-              <div><span style={{ color: '#666' }}>Current Bank</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.bank)}</div></div>
+              <div><span style={{ color: '#666' }}>Current Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.bank)}</div></div>
+              <div><span style={{ color: '#666' }}>Current Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.bank_tw_traders)}</div></div>
               <div><span style={{ color: '#666' }}>Current Cash</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.cash)}</div></div>
               <div><span style={{ color: '#666' }}>Current Received</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.received)}</div></div>
               <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.pending)}</div></div>
             </div>
 
-            {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addCash) && (
+            {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash) && (
               <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                 {getPaymentRealtimeError()}
                 {!getPaymentRealtimeError() && paymentErrors.add}
-                {paymentErrors.addBank && <div>Add Bank: {paymentErrors.addBank}</div>}
-                {paymentErrors.addCash && <div>Add Cash: {paymentErrors.addCash}</div>}
+                {paymentErrors.addBank && <div>Bank (TWF): {paymentErrors.addBank}</div>}
+                {paymentErrors.addBankTwTraders && <div>Bank (TW Traders): {paymentErrors.addBankTwTraders}</div>}
+                {paymentErrors.addCash && <div>Cash: {paymentErrors.addCash}</div>}
               </div>
             )}
 
-            <div className="txn-modal-input-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-              <div>
+            <div className="txn-modal-input-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+              <div style={{ minWidth: 0 }}>
                 <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Cash</label>
                 <input
                   type="number" min="0" step="0.01" value={addCash}
-                  onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, add: undefined })); }}
+                  onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, add: undefined })); }}
                   style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addCash) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                 />
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TWF)</label>
                 <input
                   type="number" min="0" step="0.01" value={addBank}
-                  onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addCash: undefined, add: undefined })); }}
+                  onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addCash: undefined, add: undefined })); }}
                   style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBank) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TW Traders)</label>
+                <input
+                  type="number" min="0" step="0.01" value={addBankTwTraders}
+                  onChange={(e) => { setAddBankTwTraders(e.target.value); setPaymentErrors((p) => ({ ...p, addBankTwTraders: undefined, addBank: undefined, addCash: undefined, add: undefined })); }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBankTwTraders) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                 />
               </div>
             </div>
 
             <div className="txn-modal-summary" style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
-              <div><span style={{ color: '#666' }}>New Bank Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
+              <div><span style={{ color: '#666' }}>New Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
+              <div><span style={{ color: '#666' }}>New Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankTwTraders)}</div></div>
               <div><span style={{ color: '#666' }}>New Cash Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newCash)}</div></div>
               <div><span style={{ color: '#666' }}>New Received Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newReceived)}</div></div>
               <div><span style={{ color: '#666' }}>New Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(newPending)}</div></div>
@@ -984,7 +1014,7 @@ export default function Transactions() {
               <button
                 type="button"
                 onClick={handleSubmitPayment}
-                disabled={submitting || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
+                disabled={submitting || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
                 style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submitting ? 'not-allowed' : 'pointer' }}
               >
                 {submitting ? 'Submitting...' : 'Submit'}

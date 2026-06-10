@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS `cancelled_orders` (
 CREATE TABLE IF NOT EXISTS `payments` (
   `payment_id` varchar(50) NOT NULL,
   `bank` decimal(10,2) DEFAULT 0.00,
+  `bank_tw_traders` decimal(10,2) NOT NULL DEFAULT 0.00,
   `cash` decimal(10,2) DEFAULT 0.00,
   `total_received` decimal(10,2) DEFAULT 0.00,
   `date` date DEFAULT NULL,

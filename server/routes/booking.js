@@ -393,7 +393,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const fromClause = `
         FROM orders o
         LEFT JOIN (
-          SELECT order_id, SUM(bank) AS bank, SUM(cash) AS cash
+          SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(cash) AS cash
           FROM payments
           GROUP BY order_id
         ) p ON o.order_id = p.order_id
@@ -426,6 +426,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           o.booking_date AS booking_date,
           o.total_amount AS total_amount,
           COALESCE(p.bank, 0) AS bank,
+          COALESCE(p.bank_tw_traders, 0) AS bank_tw_traders,
           COALESCE(p.cash, 0) AS cash,
           o.received_amount AS received,
           o.pending_amount AS pending,
@@ -472,14 +473,23 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       const [rows] = await db.execute(
-        `SELECT COALESCE(SUM(p.bank), 0) AS total_bank, COALESCE(SUM(p.cash), 0) AS total_cash
+        `SELECT COALESCE(SUM(p.bank), 0) AS total_bank_twf,
+                COALESCE(SUM(p.bank_tw_traders), 0) AS total_bank_tw_traders,
+                COALESCE(SUM(p.cash), 0) AS total_cash
          FROM orders o
-         LEFT JOIN (SELECT order_id, SUM(bank) AS bank, SUM(cash) AS cash FROM payments GROUP BY order_id) p ON o.order_id = p.order_id
+         LEFT JOIN (
+           SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(cash) AS cash
+           FROM payments GROUP BY order_id
+         ) p ON o.order_id = p.order_id
          ${whereClause}`,
         params
       );
+      const totalBankTwf = Number(rows[0]?.total_bank_twf ?? 0);
+      const totalBankTwTraders = Number(rows[0]?.total_bank_tw_traders ?? 0);
       res.json({
-        totalBank: Number(rows[0]?.total_bank ?? 0),
+        totalBankTwf,
+        totalBankTwTraders,
+        totalBank: totalBankTwf + totalBankTwTraders,
         totalCash: Number(rows[0]?.total_cash ?? 0),
       });
     } catch (error) {
@@ -557,18 +567,24 @@ export function registerBookingRoutes(app, db, verifyToken) {
   app.get("/api/booking/transactions", verifyToken, async (req, res) => {
     try {
       const [paySum] = await db.execute(
-        "SELECT COALESCE(SUM(bank), 0) AS total_bank, COALESCE(SUM(cash), 0) AS total_cash, COALESCE(SUM(total_received), 0) AS total_received FROM payments"
+        `SELECT COALESCE(SUM(bank), 0) AS total_bank_twf,
+                COALESCE(SUM(bank_tw_traders), 0) AS total_bank_tw_traders,
+                COALESCE(SUM(cash), 0) AS total_cash,
+                COALESCE(SUM(total_received), 0) AS total_received
+         FROM payments`
       );
       const [expSum] = await db.execute(
         "SELECT COALESCE(SUM(bank), 0) AS expenses_bank, COALESCE(SUM(cash), 0) AS expenses_cash FROM booking_expenses"
       );
-      const totalBank = Number(paySum[0]?.total_bank ?? 0);
+      const totalBankTwf = Number(paySum[0]?.total_bank_twf ?? 0);
+      const totalBankTwTraders = Number(paySum[0]?.total_bank_tw_traders ?? 0);
+      const totalBank = totalBankTwf + totalBankTwTraders;
       const totalCash = Number(paySum[0]?.total_cash ?? 0);
       const totalExpensesBank = Number(expSum[0]?.expenses_bank ?? 0);
       const totalExpensesCash = Number(expSum[0]?.expenses_cash ?? 0);
 
       const [payments] = await db.execute(
-        "SELECT p.payment_id, p.bank, p.cash, p.total_received, p.date, p.order_id FROM payments p ORDER BY p.date DESC, p.payment_id DESC"
+        "SELECT p.payment_id, p.bank, p.bank_tw_traders, p.cash, p.total_received, p.date, p.order_id FROM payments p ORDER BY p.date DESC, p.payment_id DESC"
       );
       const [expenses] = await db.execute(
         "SELECT expense_id, bank, cash, total, done_at, description FROM booking_expenses ORDER BY done_at DESC"
@@ -576,6 +592,8 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       res.json({
         summary: {
+          totalBankTwf,
+          totalBankTwTraders,
           totalBank,
           totalCash,
           totalExpensesBank,
@@ -837,12 +855,13 @@ export function registerBookingRoutes(app, db, verifyToken) {
   app.post("/api/booking/orders/:orderId/payments", verifyToken, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { bank = 0, cash = 0 } = req.body || {};
+      const { bank = 0, bank_tw_traders = 0, cash = 0 } = req.body || {};
 
       const addBank = Math.max(0, Number(bank) || 0);
+      const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
       const addCash = Math.max(0, Number(cash) || 0);
-      if (addBank === 0 && addCash === 0) {
-        return res.status(400).json({ message: "Add at least one of bank or cash amount" });
+      if (addBank === 0 && addBankTwTraders === 0 && addCash === 0) {
+        return res.status(400).json({ message: "Add at least one of bank, bank (TW Traders), or cash amount" });
       }
 
       const [orders] = await db.execute("SELECT * FROM orders WHERE order_id = ?", [orderId]);
@@ -853,7 +872,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const order = orders[0];
       const totalAmount = Number(order.total_amount) || 0;
       const currentReceived = Number(order.received_amount) || 0;
-      const paymentAmount = addBank + addCash;
+      const paymentAmount = addBank + addBankTwTraders + addCash;
       const newReceived = currentReceived + paymentAmount;
 
       if (newReceived > totalAmount) {
@@ -868,9 +887,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const today = toDateOnly(new Date());
 
       await db.execute(
-        `INSERT INTO payments (payment_id, order_id, bank, cash, total_received, date)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [paymentId, orderId, addBank, addCash, paymentAmount, today]
+        `INSERT INTO payments (payment_id, order_id, bank, bank_tw_traders, cash, total_received, date)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, orderId, addBank, addBankTwTraders, addCash, paymentAmount, today]
       );
 
       await db.execute(
@@ -886,6 +905,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         new_values: {
           payment_id: paymentId,
           bank: addBank,
+          bank_tw_traders: addBankTwTraders,
           cash: addCash,
           total_received: newReceived,
           pending_amount: Math.max(0, totalAmount - newReceived),
