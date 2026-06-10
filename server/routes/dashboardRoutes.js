@@ -152,7 +152,7 @@ export function registerDashboardRoutes(app, db, verifyToken) {
     }
   });
 
-  // GET /api/dashboard/sales-overview?year=... — monthly series
+  // GET /api/dashboard/sales-overview?year=... — daily series for the selected year
   app.get("/api/dashboard/sales-overview", verifyToken, async (req, res) => {
     try {
       const { year = "2026" } = req.query;
@@ -165,7 +165,7 @@ export function registerDashboardRoutes(app, db, verifyToken) {
       const [rows] = await db.execute(
         `
         SELECT
-          DATE_FORMAT(o.booking_date, '%Y-%m') AS month,
+          DATE(o.booking_date) AS date,
           COUNT(*) AS orders,
           COALESCE(SUM(o.total_amount), 0) AS totalSales,
           COALESCE(SUM(o.received_amount), 0) AS receivedPayments,
@@ -173,8 +173,8 @@ export function registerDashboardRoutes(app, db, verifyToken) {
           COALESCE(SUM(o.quantity), 0) AS totalQuantity
         FROM orders o
         ${where}
-        GROUP BY DATE_FORMAT(o.booking_date, '%Y-%m')
-        ORDER BY month ASC
+        GROUP BY DATE(o.booking_date)
+        ORDER BY date ASC
         `,
         params
       );
@@ -182,9 +182,9 @@ export function registerDashboardRoutes(app, db, verifyToken) {
       const series = (rows || []).map((r) => {
         const orders = Number(r.orders || 0);
         const totalSales = Number(r.totalSales || 0);
+        const date = r.date ? String(r.date).slice(0, 10) : "";
         return {
-          date: r.month ? String(r.month) : "",
-          month: r.month ? String(r.month) : "",
+          date,
           orders,
           totalSales,
           receivedPayments: Number(r.receivedPayments || 0),

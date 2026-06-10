@@ -376,7 +376,7 @@ export default function OperationsDeliveries() {
   const [err,           setErr]           = useState('');
   const [modal,         setModal]         = useState(null);
   const [saving,        setSaving]        = useState(false);
-  const [printing,      setPrinting]      = useState(false);
+  const [printing,      setPrinting]      = useState(null); // null | 'challans' | 'labels'
   const [selectedIds,   setSelectedIds]   = useState(() => new Set());
 
   const [search,          setSearch]          = useState('');
@@ -727,8 +727,11 @@ export default function OperationsDeliveries() {
 
   const allPageSelected = groups.length > 0 && groups.every((g) => selectedIds.has(g.challan_id));
 
-  const onPrintPdf = async () => {
-    if (!selectedBatch) return alert('Select a batch first.');
+  const fetchPrintItems = async () => {
+    if (!selectedBatch) {
+      alert('Select a batch first.');
+      return null;
+    }
     const printAll = selectedIds.size === 0;
     let rowsToPrint = printAll
       ? groups
@@ -749,39 +752,61 @@ export default function OperationsDeliveries() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setErr(data.message || 'Failed to load challans for printing');
-        return;
+        return null;
       }
       rowsToPrint = Array.isArray(data.groups) ? data.groups : [];
     }
 
     if (!rowsToPrint.length) {
-      return alert(
+      alert(
         printAll
           ? 'No challans match the current batch and filters.'
           : 'Select at least one visible challan to print, or clear selection to print all filtered challans.'
       );
+      return null;
     }
 
-    setPrinting(true);
+    const res = await authFetch(`${API_BASE}/operations/challans/bulk-detail`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        batch: selectedBatch,
+        challan_ids: sortChallanRowsForPrint(rowsToPrint).map((c) => c.challan_id),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Could not build PDF');
+    if (!Array.isArray(data.items) || data.items.length === 0) throw new Error('No data to print');
+    return data.items;
+  };
+
+  const onPrintChallans = async () => {
+    setPrinting('challans');
     setErr('');
     try {
-      const res = await authFetch(`${API_BASE}/operations/challans/bulk-detail`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          batch: selectedBatch,
-          challan_ids: sortChallanRowsForPrint(rowsToPrint).map((c) => c.challan_id),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Could not build PDF');
-      if (!Array.isArray(data.items) || data.items.length === 0) throw new Error('No data to print');
+      const items = await fetchPrintItems();
+      if (!items) return;
       const { generateChallanPdf } = await import('../utils/challanPdf');
-      await generateChallanPdf(data.items, { includeSlotDividers: false });
+      await generateChallanPdf(items, { includeSlotDividers: false });
     } catch (e) {
-      setErr(e.message || 'PDF generation failed');
+      setErr(e.message || 'Challan PDF generation failed');
     } finally {
-      setPrinting(false);
+      setPrinting(null);
+    }
+  };
+
+  const onPrintLabels = async () => {
+    setPrinting('labels');
+    setErr('');
+    try {
+      const items = await fetchPrintItems();
+      if (!items) return;
+      const { generateLabelsPdf } = await import('../utils/challanPdf');
+      await generateLabelsPdf(items);
+    } catch (e) {
+      setErr(e.message || 'Label PDF generation failed');
+    } finally {
+      setPrinting(null);
     }
   };
 
@@ -814,7 +839,7 @@ export default function OperationsDeliveries() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             {(saving || printing) && (
               <span style={{ fontSize: '10px', color: '#999', fontWeight: '600' }}>
-                {printing ? 'Generating PDF…' : 'Saving…'}
+                {printing === 'challans' ? 'Generating challans…' : printing === 'labels' ? 'Generating labels…' : 'Saving…'}
               </span>
             )}
             {batches.length > 0 && (
@@ -864,11 +889,20 @@ export default function OperationsDeliveries() {
             <button
               type="button"
               disabled={printing || saving}
-              onClick={onPrintPdf}
+              onClick={onPrintChallans}
               title={selectedIds.size ? `Print ${selectedIds.size} selected challan(s)` : `Print all ${totalGroups} challan(s) matching current batch and filters`}
               style={{ padding: '6px 13px', height: '29px', background: '#FF5722', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
             >
-              Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}
+              Print Challans{selectedIds.size ? ` (${selectedIds.size})` : ''}
+            </button>
+            <button
+              type="button"
+              disabled={printing || saving}
+              onClick={onPrintLabels}
+              title={selectedIds.size ? `Print labels for ${selectedIds.size} selected challan(s)` : `Print labels for all ${totalGroups} challan(s) matching current batch and filters`}
+              style={{ padding: '6px 13px', height: '29px', background: '#fff', color: '#FF5722', border: '1px solid #FFCCBC', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}
+            >
+              Print Labels{selectedIds.size ? ` (${selectedIds.size})` : ''}
             </button>
             <button type="button" onClick={() => setScanOpen(true)} style={{ padding: '6px 13px', height: '29px', background: '#fff', color: '#FF5722', border: '1px solid #FFCCBC', borderRadius: '6px', fontSize: '11px', fontWeight: '600', cursor: 'pointer' }}>Scan QR</button>
             <button type="button" onClick={() => { loadBatches(); load(); }} style={{ padding: '6px 13px', height: '29px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }}>Refresh</button>
@@ -883,7 +917,8 @@ export default function OperationsDeliveries() {
             <input type="search" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
           <button type="button" className={`ops-filter-toggle-btn${mobileFiltersOpen ? ' is-open' : ''}`} onClick={() => setMobileFiltersOpen((v) => !v)}>⚙ Filters</button>
-          <button type="button" disabled={printing} onClick={onPrintPdf} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Print PDF{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
+          <button type="button" disabled={printing || saving} onClick={onPrintChallans} style={{ padding: '9px 12px', borderRadius: '8px', background: '#FF5722', color: '#fff', border: 'none', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Challans{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
+          <button type="button" disabled={printing || saving} onClick={onPrintLabels} style={{ padding: '9px 12px', borderRadius: '8px', background: '#fff', color: '#FF5722', border: '1px solid #FFCCBC', fontSize: '13px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Labels{selectedIds.size ? ` (${selectedIds.size})` : ''}</button>
           <button type="button" onClick={() => setScanOpen(true)} style={{ padding: '9px 12px', borderRadius: '8px', background: '#fff', color: '#FF5722', border: '1px solid #FFCCBC', fontSize: '13px', cursor: 'pointer' }}>Scan</button>
         </div>
         <div className="om-filter-mobile" style={{ display: 'none' }}>

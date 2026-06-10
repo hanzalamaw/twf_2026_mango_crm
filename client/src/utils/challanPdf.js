@@ -232,7 +232,13 @@ function getChallanCustomerFields(c, orders, safe) {
     if (a) return `Alt: ${a}`;
     return '—';
   })();
-  return { customerId, customerName, contact };
+  return {
+    customerId,
+    customerName,
+    contact,
+    primaryContact: safe(primaryContact, '—'),
+    altContact: safe(altContact, '—'),
+  };
 }
 
 function drawSlotDividerPage(doc, slot, PW, PH) {
@@ -456,6 +462,246 @@ function drawOrderStickerPage(doc, layout, item, order, helpers) {
   doc.setFontSize(9);
   doc.setTextColor(160, 160, 160);
   doc.text('THE WARSI FARM — paste on physical order', ML, PH - 28);
+}
+
+const LABELS_PAGE_TOP = 18;
+const LABELS_PAGE_BOTTOM = 18;
+const LABELS_CUT_BEFORE = 3;
+const LABELS_CUT_AFTER = 18;
+const LABELS_CUT_GAP = LABELS_CUT_BEFORE + LABELS_CUT_AFTER;
+const LABELS_PER_PAGE = 4;
+
+function labelSlotHeight(PH) {
+  const gaps = (LABELS_PER_PAGE - 1) * LABELS_CUT_GAP;
+  return (PH - LABELS_PAGE_TOP - LABELS_PAGE_BOTTOM - gaps) / LABELS_PER_PAGE;
+}
+
+function drawDottedCutLine(doc, x1, x2, y) {
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.7);
+  if (typeof doc.setLineDashPattern === 'function') {
+    doc.setLineDashPattern([4, 4], 0);
+  }
+  doc.line(x1, y, x2, y);
+  if (typeof doc.setLineDashPattern === 'function') {
+    doc.setLineDashPattern([]);
+  }
+}
+
+function collectAllLabelEntries(items) {
+  const entries = [];
+  for (const item of sortPrintItems(items)) {
+    const orders = Array.isArray(item.orders) ? item.orders : [];
+    for (const order of orders) {
+      const count = stickerPagesForOrder(order);
+      for (let copy = 0; copy < count; copy += 1) {
+        entries.push({ item, order });
+      }
+    }
+  }
+  return entries;
+}
+
+/** Compact box label for 4-up sheet — no includes box, no verified-by. */
+function drawCompactBoxLabel(doc, layout, item, order, helpers, topY, slotHeight, contentTopPad = 8) {
+  const { PW, ML, MR, CONTENT_W } = layout;
+  const { safe, split, getChallanCustomerFields: getFields } = helpers;
+  const c = item.challan || {};
+  const orders = Array.isArray(item.orders) ? item.orders : [];
+  const { customerId, customerName, primaryContact, altContact } = getFields(c, orders, safe);
+
+  const orderTypeNorm = formatOrderTypeForChallanPrint(order);
+  const shareDesc = safe(order.description);
+  const tagSource = {
+    ...c,
+    orders,
+    description: getDescriptionText({ ...c, orders }),
+  };
+  const stickerTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
+
+  let y = topY + contentTopPad;
+  const centerX = PW / 2;
+  const contentMaxW = CONTENT_W - 20;
+
+  if (stickerTag) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    const tagText = stickerTag === 'special_request' ? 'SPECIAL REQUEST' : 'AFFLUENT';
+    doc.setTextColor(0, 0, 0);
+    doc.text(tagText, centerX, y, { align: 'center' });
+    y += 10;
+  }
+
+  const typeLines = split(orderTypeNorm, contentMaxW).slice(0, 2);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.setTextColor(0, 0, 0);
+  typeLines.forEach((line, i) => {
+    doc.text(line, centerX, y + i * 16, { align: 'center' });
+  });
+  y += typeLines.length * 16 + 3;
+
+  if (shareDesc) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(60, 60, 60);
+    const descLine = split(shareDesc, contentMaxW)[0] || '';
+    if (descLine) {
+      doc.text(descLine, centerX, y, { align: 'center' });
+      y += 10;
+    }
+  }
+
+  y += 3;
+  doc.setDrawColor(200, 200, 200);
+  doc.setLineWidth(0.6);
+  doc.line(ML, y, MR, y);
+  y += 10;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(40, 40, 40);
+  doc.text(`Challan # ${safe(c.challan_id, '')}`, ML, y);
+  if (order.order_id) {
+    doc.text(`Order # ${order.order_id}`, MR, y, { align: 'right' });
+  }
+  y += 12;
+
+  const boxY = y;
+  const midX = ML + CONTENT_W / 2;
+  const leftX = ML + 10;
+  const rightX = midX + 10;
+  const colMaxW = CONTENT_W / 2 - 24;
+
+  const drawLabelInfoCell = (label, value, x, yPos) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(25, 25, 25);
+    doc.text(`${label}:`, x, yPos);
+    const labelW = doc.getTextWidth(`${label}: `);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(45, 45, 45);
+    const lines = doc.splitTextToSize(safe(value), colMaxW - labelW - 2).slice(0, 2);
+    doc.text(lines, x + labelW + 2, yPos);
+    return 9 * lines.length;
+  };
+
+  const infoRows = [
+    ['Customer ID', customerId, 'Address', c.address || '—'],
+    ['Customer Name', customerName, 'Area', c.area || '—'],
+    ['Contact', primaryContact, 'Alternate Contact', altContact],
+  ];
+  let boxH = 14;
+  infoRows.forEach(([ll, lv, rl, rv]) => {
+    boxH += Math.max(
+      doc.splitTextToSize(safe(lv), colMaxW).length,
+      doc.splitTextToSize(safe(rv), colMaxW).length
+    ) * 8 + 5;
+  });
+
+  doc.setFillColor(252, 252, 252);
+  doc.setDrawColor(215, 215, 215);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(ML, boxY, CONTENT_W, boxH, 4, 4, 'FD');
+  doc.setDrawColor(235, 235, 235);
+  doc.line(midX, boxY + 8, midX, boxY + boxH - 8);
+
+  let rowY = boxY + 12;
+  infoRows.forEach(([ll, lv, rl, rv]) => {
+    const lh = drawLabelInfoCell(ll, lv, leftX, rowY);
+    const rh = drawLabelInfoCell(rl, rv, rightX, rowY);
+    rowY += Math.max(lh, rh) + 5;
+  });
+
+  y = boxY + boxH + 26;
+  const openLabel = 'Open This Box on:';
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.setTextColor(20, 20, 20);
+  doc.text(openLabel, ML, y);
+  const openLabelW = doc.getTextWidth(`${openLabel} `);
+  doc.setDrawColor(30, 30, 30);
+  doc.setLineWidth(0.7);
+  doc.line(ML + openLabelW + 4, y + 2, MR - 8, y + 2);
+}
+
+function renderLabelPages(doc, items, layout, pdfHelpers) {
+  const { PW, PH } = layout;
+  const entries = collectAllLabelEntries(items);
+  if (!entries.length) return;
+
+  const slotH = labelSlotHeight(PH);
+  let firstPage = true;
+
+  for (let i = 0; i < entries.length; i += 1) {
+    const slotOnPage = i % LABELS_PER_PAGE;
+    if (slotOnPage === 0) {
+      if (!firstPage) doc.addPage();
+      firstPage = false;
+    }
+
+    const topY = LABELS_PAGE_TOP + slotOnPage * (slotH + LABELS_CUT_GAP);
+    const { item, order } = entries[i];
+    const contentTopPad = slotOnPage === 0 ? 8 : 10;
+    drawCompactBoxLabel(doc, layout, item, order, pdfHelpers, topY, slotH, contentTopPad);
+
+    if (slotOnPage < LABELS_PER_PAGE - 1 && i < entries.length - 1) {
+      drawDottedCutLine(doc, 0, PW, topY + slotH + LABELS_CUT_BEFORE);
+    }
+  }
+}
+
+function createPdfDoc() {
+  return new jsPDF({ unit: 'pt', format: 'a4' });
+}
+
+function createPdfContext(doc) {
+  const PW = 595.28;
+  const PH = 841.89;
+  const ML = 36;
+  const MR = PW - 36;
+  const CONTENT_W = MR - ML;
+
+  const safe = (v, fallback = '') => {
+    const s = String(v ?? '').trim();
+    return s || fallback;
+  };
+
+  const split = (text, maxWidth) => doc.splitTextToSize(safe(text), maxWidth);
+
+  const drawLineValue = (label, value, x, y, lineEndX) => {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(20, 20, 20);
+    doc.text(`${label}:`, x, y);
+
+    const labelW = doc.getTextWidth(`${label}: `);
+    const valueX = x + labelW + 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(35, 35, 35);
+
+    const valueLines = split(value || '', lineEndX - valueX - 4).slice(0, 1);
+    if (valueLines.length) doc.text(valueLines, valueX, y);
+
+    doc.setDrawColor(30, 30, 30);
+    doc.setLineWidth(0.8);
+    doc.line(valueX, y + 4, lineEndX, y + 4);
+  };
+
+  return {
+    PW,
+    PH,
+    ML,
+    MR,
+    CONTENT_W,
+    safe,
+    split,
+    drawLineValue,
+    layout: { PW, PH, ML, MR, CONTENT_W },
+    pdfHelpers: { safe, split, getChallanCustomerFields },
+  };
 }
 
 /* ─────────────────────────────────────────────
@@ -794,42 +1040,9 @@ async function renderChallanPagesForOrders(doc, ctx, item, orders, { isPrimaryCh
 /* ─────────────────────────────────────────────
    generatePdf  –  cow section, then goat section per challan
    ───────────────────────────────────────────── */
-export async function generateChallanPdf(items, options = {}) {
+async function renderChallanPagesOnly(doc, items, options = {}) {
   const { includeSlotDividers = false } = options;
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-
-  const PW = 595.28;
-  const PH = 841.89;
-  const ML = 36;
-  const MR = PW - 36;
-  const CONTENT_W = MR - ML;
-
-  const safe = (v, fallback = '') => {
-    const s = String(v ?? '').trim();
-    return s || fallback;
-  };
-
-  const split = (text, maxWidth) => doc.splitTextToSize(safe(text), maxWidth);
-
-  const drawLineValue = (label, value, x, y, lineEndX) => {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(20, 20, 20);
-    doc.text(`${label}:`, x, y);
-
-    const labelW = doc.getTextWidth(`${label}: `);
-    const valueX = x + labelW + 6;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(35, 35, 35);
-
-    const valueLines = split(value || '', lineEndX - valueX - 4).slice(0, 1);
-    if (valueLines.length) doc.text(valueLines, valueX, y);
-
-    doc.setDrawColor(30, 30, 30);
-    doc.setLineWidth(0.8);
-    doc.line(valueX, y + 4, lineEndX, y + 4);
-  };
+  const { PW, PH, ML, MR, CONTENT_W, safe, split, drawLineValue, layout } = createPdfContext(doc);
 
   const sortedItems = sortPrintItems(items);
   let firstPage = true;
@@ -838,8 +1051,6 @@ export async function generateChallanPdf(items, options = {}) {
     firstPage = false;
   };
   let lastSlotKey = null;
-  const layout = { PW, PH, ML, MR, CONTENT_W };
-  const pdfHelpers = { safe, split, getChallanCustomerFields };
   const ctx = { PW, PH, ML, MR, CONTENT_W, safe, split, drawLineValue, nextPage };
 
   for (const item of sortedItems) {
@@ -871,15 +1082,23 @@ export async function generateChallanPdf(items, options = {}) {
         isPrimaryChallanPage: isFirstChallanSection,
       });
       isFirstChallanSection = false;
-      for (const o of sectionOrders) {
-        const stickerCount = stickerPagesForOrder(o);
-        for (let copy = 0; copy < stickerCount; copy += 1) {
-          nextPage();
-          drawOrderStickerPage(doc, layout, item, o, pdfHelpers);
-        }
-      }
     }
   }
+}
 
-  doc.save(`challan-${new Date().toISOString().slice(0, 10)}.pdf`);
+/** Main challan sheet(s) only — no per-box sticker pages. */
+export async function generateChallanPdf(items, options = {}) {
+  const doc = createPdfDoc();
+  await renderChallanPagesOnly(doc, items, options);
+  doc.save(`challans-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+/** Box labels only — 4 per page with dotted cut lines. */
+export async function generateLabelsPdf(items) {
+  const entries = collectAllLabelEntries(items);
+  if (!entries.length) throw new Error('No box labels to print');
+  const doc = createPdfDoc();
+  const { layout, pdfHelpers } = createPdfContext(doc);
+  renderLabelPages(doc, items, layout, pdfHelpers);
+  doc.save(`labels-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
