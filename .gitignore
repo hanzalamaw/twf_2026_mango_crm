@@ -13,9 +13,10 @@ package-lock.json
 # =========================
 # Build outputs
 # =========================
-dist/
+# client/dist is committed (production deploy without on-server npm run build)
 build/
 coverage/
+server/dist/
 
 # =========================
 # Environment variables

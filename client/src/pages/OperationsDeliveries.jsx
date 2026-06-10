@@ -5,7 +5,6 @@ import {
 } from '../utils/operationsGroupPatch';
 import { OpsSearchIcon } from '../components/OpsFilters';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
 import { useAuth } from '../context/AuthContext';
 import SharedChallanModal from '../components/SharedChallanModal';
 import SearchableRiderFilter from '../components/SearchableRiderFilter';
@@ -21,7 +20,6 @@ import {
 } from '../utils/orderTags';
 import { buildDeliveriesGroupsQuery, DELIVERIES_PAGE_SIZE, sortChallanRowsForPrint } from '../utils/deliveriesGroupsApi';
 import { useOperationsBatch } from '../utils/useOperationsBatch';
-import { generateChallanPdf } from '../utils/challanPdf';
 import OrderDescriptionCell from '../components/OrderDescriptionCell';
 import {
   ORDER_TYPE_FILTERS,
@@ -594,6 +592,7 @@ export default function OperationsDeliveries() {
       if (cancelled) return;
       const mount = document.getElementById(regionId); if (mount) mount.innerHTML = '';
       try {
+        const { Html5Qrcode } = await import('html5-qrcode');
         const html5 = new Html5Qrcode(regionId);
         scannerRef.current = html5;
         setScanStatus('Camera ready. Keep the challan QR inside the box.');
@@ -777,6 +776,7 @@ export default function OperationsDeliveries() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || 'Could not build PDF');
       if (!Array.isArray(data.items) || data.items.length === 0) throw new Error('No data to print');
+      const { generateChallanPdf } = await import('../utils/challanPdf');
       await generateChallanPdf(data.items, { includeSlotDividers: false });
     } catch (e) {
       setErr(e.message || 'PDF generation failed');

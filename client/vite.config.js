@@ -15,6 +15,22 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    build: {
+      chunkSizeWarningLimit: 1200,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify')) return 'pdf';
+            if (id.includes('html5-qrcode')) return 'qr-scanner';
+            if (id.includes('/qrcode/') || id.includes('node_modules/qrcode')) return 'qrcode-gen';
+            if (id.includes('xlsx')) return 'xlsx';
+            if (id.includes('recharts')) return 'recharts';
+            if (id.includes('socket.io')) return 'socket';
+          },
+        },
+      },
+    },
     server: {
       proxy: {
         // Includes /api/socket.io (Socket.IO path) — see server/index.js SOCKET_IO_PATH
