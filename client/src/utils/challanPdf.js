@@ -512,25 +512,10 @@ function drawCompactBoxLabel(doc, layout, item, order, helpers, topY, slotHeight
 
   const orderTypeNorm = formatOrderTypeForChallanPrint(order);
   const shareDesc = safe(order.description);
-  const tagSource = {
-    ...c,
-    orders,
-    description: getDescriptionText({ ...c, orders }),
-  };
-  const stickerTag = getOrderTag(tagSource, 'total_hissa', 'total_waqf_hissa');
 
   let y = topY + contentTopPad;
   const centerX = PW / 2;
   const contentMaxW = CONTENT_W - 20;
-
-  if (stickerTag) {
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    const tagText = stickerTag === 'special_request' ? 'SPECIAL REQUEST' : 'AFFLUENT';
-    doc.setTextColor(0, 0, 0);
-    doc.text(tagText, centerX, y, { align: 'center' });
-    y += 10;
-  }
 
   const typeLines = split(orderTypeNorm, contentMaxW).slice(0, 2);
   doc.setFont('helvetica', 'bold');
