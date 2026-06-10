@@ -9,6 +9,13 @@ import {
 
 const fmt = (n) => Number(n || 0).toLocaleString("en-PK");
 
+const formatChartDate = (dateStr) => {
+  if (!dateStr) return "";
+  const d = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString("en-PK", { month: "short", day: "numeric" });
+};
+
 const CHART_COLORS = [
   "#FF5722", "#2196F3", "#4CAF50", "#9333EA", "#FF9800",
   "#3B82F6", "#10B981", "#f59e0b", "#ec4899", "#6366f1",
@@ -521,7 +528,7 @@ const SalesOverviewChart = ({ series, reveal }) => {
     const p = payload[0]?.payload || {};
     return (
       <div className="chartTooltip">
-        <div className="chartTooltipTitle">{label}</div>
+        <div className="chartTooltipTitle">{formatChartDate(label) || label}</div>
         <div className="chartTooltipRow"><span>Orders:</span><span>{fmt(Number(p.orders || 0))}</span></div>
         <div className="chartTooltipRow green"><span>Total Sales:</span><span>Rs {fmt(Number(p.totalSales || 0))}</span></div>
         <div className="chartTooltipRow"><span>Received:</span><span>Rs {fmt(Number(p.receivedPayments || 0))}</span></div>
@@ -585,7 +592,13 @@ const SalesOverviewChart = ({ series, reveal }) => {
               {chartType === "line" ? (
                 <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }} stroke="#6b7280" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }}
+                    stroke="#6b7280"
+                    tickFormatter={formatChartDate}
+                    minTickGap={24}
+                  />
                   <YAxis tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }} stroke="#6b7280" tickFormatter={(v) => fmt(v)} />
                   <Tooltip content={<CustomTooltip />} cursor={{ stroke: "#FF5722", strokeWidth: 1 }} />
                   <Line
@@ -600,7 +613,13 @@ const SalesOverviewChart = ({ series, reveal }) => {
               ) : (
                 <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }} stroke="#6b7280" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }}
+                    stroke="#6b7280"
+                    tickFormatter={formatChartDate}
+                    minTickGap={24}
+                  />
                   <YAxis tick={{ fontSize: 11, fontFamily: "'Poppins','Inter',sans-serif" }} stroke="#6b7280" tickFormatter={(v) => fmt(v)} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey={activeMetric} fill="#FF5722" radius={[4, 4, 0, 0]}>

@@ -32,7 +32,8 @@ function buildChallanPrintOrderTypeSummary(orders) {
       seen.push(label);
       counts.set(label, 0);
     }
-    counts.set(label, counts.get(label) + 1);
+    const qty = Number(o.quantity);
+    counts.set(label, counts.get(label) + (Number.isFinite(qty) && qty > 0 ? qty : 1));
   }
   return seen.map((label) => ({
     label,
