@@ -23,6 +23,12 @@ function formatDate(val) {
   return String(val).split('T')[0];
 }
 
+function formatPkr(val) {
+  const n = Number(val);
+  if (Number.isNaN(n)) return '—';
+  return `PKR ${n.toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
 export default function BatchManagement() {
   const [batches, setBatches] = useState([]);
   const [year, setYear] = useState('2026');
@@ -33,6 +39,12 @@ export default function BatchManagement() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [prices, setPrices] = useState([]);
+  const [priceDraft, setPriceDraft] = useState([]);
+  const [pricesLoading, setPricesLoading] = useState(true);
+  const [pricesEditing, setPricesEditing] = useState(false);
+  const [pricesSaving, setPricesSaving] = useState(false);
+  const [priceError, setPriceError] = useState('');
 
   const token = localStorage.getItem('token');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -53,7 +65,59 @@ export default function BatchManagement() {
     }
   }, [token, year]);
 
+  const fetchPrices = useCallback(async () => {
+    setPricesLoading(true);
+    setPriceError('');
+    try {
+      const res = await fetch(`${API}/order-type-prices`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to load order type prices');
+      const data = await res.json();
+      const list = Array.isArray(data.data) ? data.data : [];
+      setPrices(list);
+      setPriceDraft(list.map((r) => ({ ...r })));
+    } catch (e) {
+      setPriceError(e.message || 'Failed to load prices');
+    } finally {
+      setPricesLoading(false);
+    }
+  }, [token]);
+
   useEffect(() => { fetchBatches(); }, [fetchBatches]);
+  useEffect(() => { fetchPrices(); }, [fetchPrices]);
+
+  const startPriceEdit = () => {
+    setPriceDraft(prices.map((r) => ({ ...r })));
+    setPricesEditing(true);
+    setPriceError('');
+  };
+
+  const cancelPriceEdit = () => {
+    setPriceDraft(prices.map((r) => ({ ...r })));
+    setPricesEditing(false);
+    setPriceError('');
+  };
+
+  const handleSavePrices = async () => {
+    setPricesSaving(true);
+    setPriceError('');
+    try {
+      const res = await fetch(`${API}/order-type-prices`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ prices: priceDraft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Save failed');
+      const list = Array.isArray(data.data) ? data.data : priceDraft;
+      setPrices(list);
+      setPriceDraft(list.map((r) => ({ ...r })));
+      setPricesEditing(false);
+    } catch (e) {
+      setPriceError(e.message || 'Save failed');
+    } finally {
+      setPricesSaving(false);
+    }
+  };
 
   const openCreate = () => {
     setEditId(null);
@@ -246,6 +310,81 @@ export default function BatchManagement() {
           </div>
         </div>
       )}
+
+      <div style={{ marginTop: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#333' }}>Order Type Pricing</h3>
+            <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#888' }}>
+              Set per-unit prices for 5 KG and 10 KG. New orders auto-calculate total as price × quantity.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {pricesEditing ? (
+              <>
+                <button type="button" onClick={cancelPriceEdit} disabled={pricesSaving}
+                  style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fff', fontSize: '12px', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button type="button" onClick={handleSavePrices} disabled={pricesSaving}
+                  style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#FF5722', color: '#fff', fontWeight: 600, fontSize: '12px', cursor: 'pointer' }}>
+                  {pricesSaving ? 'Saving…' : 'Save Prices'}
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={startPriceEdit}
+                style={{ padding: '8px 14px', borderRadius: '6px', border: '1px solid #e0e0e0', background: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+                Edit Prices
+              </button>
+            )}
+          </div>
+        </div>
+
+        {priceError && (
+          <div style={{ background: '#FFF5F2', color: '#FF5722', padding: '8px 12px', borderRadius: '6px', marginBottom: '12px', fontSize: '12px', border: '1px solid #FFE0D6' }}>
+            {priceError}
+          </div>
+        )}
+
+        <div style={{ background: '#fff', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'auto' }}>
+          {pricesLoading ? (
+            <div style={{ padding: '24px', textAlign: 'center', color: '#666', fontSize: '12px' }}>Loading prices…</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '520px' }}>
+              <thead>
+                <tr style={{ background: '#fafafa', borderBottom: '1px solid #eee' }}>
+                  {['Order Type', '5 KG Price (PKR)', '10 KG Price (PKR)'].map((h) => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '11px', fontWeight: 600, color: '#666' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(pricesEditing ? priceDraft : prices).length === 0 ? (
+                  <tr><td colSpan={3} style={{ padding: '20px', textAlign: 'center', color: '#999', fontSize: '12px' }}>No pricing configured.</td></tr>
+                ) : (pricesEditing ? priceDraft : prices).map((row, idx) => (
+                  <tr key={row.price_id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                    <td style={{ padding: '10px 12px', fontSize: '12px', fontWeight: 500 }}>{row.order_type}</td>
+                    <td style={{ padding: '10px 12px', fontSize: '12px' }}>
+                      {pricesEditing ? (
+                        <input type="number" min="0" step="1" style={{ ...inputStyle, maxWidth: '160px' }}
+                          value={row.price_5kg}
+                          onChange={(e) => setPriceDraft((p) => p.map((r, i) => i === idx ? { ...r, price_5kg: e.target.value } : r))} />
+                      ) : formatPkr(row.price_5kg)}
+                    </td>
+                    <td style={{ padding: '10px 12px', fontSize: '12px' }}>
+                      {pricesEditing ? (
+                        <input type="number" min="0" step="1" style={{ ...inputStyle, maxWidth: '160px' }}
+                          value={row.price_10kg}
+                          onChange={(e) => setPriceDraft((p) => p.map((r, i) => i === idx ? { ...r, price_10kg: e.target.value } : r))} />
+                      ) : formatPkr(row.price_10kg)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
 
       {deleteTarget && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: '16px' }}>

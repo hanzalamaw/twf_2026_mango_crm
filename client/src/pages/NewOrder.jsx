@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE as API } from '../config/api';
+import { buildPriceLookup, calcOrderTotal } from '../utils/orderPriceCalc';
 
 const ORDER_TYPES = ['Mango - Chaunsa', 'Mango - Sindhri', 'Mango - Anwar Ratol'];
 const ORDER_SOURCES = ['Tele-Sales', 'Social Media (Organic)', 'Social Media (Ads)', 'Previous Customer', 'Website', 'Reference', 'Walk-in', 'International Calling'];
@@ -34,7 +35,10 @@ const NewOrder = () => {
   const [weightCustom, setWeightCustom] = useState('');
   const [quantityMode, setQuantityMode] = useState('1');
   const [quantityCustom, setQuantityCustom] = useState('');
+  const [orderTypePrices, setOrderTypePrices] = useState([]);
+  const [totalManual, setTotalManual] = useState(false);
   const latestBatchRef = useRef('');
+  const priceLookup = useMemo(() => buildPriceLookup(orderTypePrices), [orderTypePrices]);
 
   const syncWeightToForm = useCallback((mode, custom) => {
     const val = mode === 'custom' ? custom : mode;
@@ -50,6 +54,30 @@ const NewOrder = () => {
     syncWeightToForm('10', '');
     syncQuantityToForm('1', '');
   }, [syncWeightToForm, syncQuantityToForm]);
+
+  const applyAutoTotal = useCallback((orderType, weightModeVal, weightCustomVal, quantityModeVal, quantityCustomVal) => {
+    const weightVal = weightModeVal === 'custom' ? weightCustomVal : weightModeVal;
+    const qtyVal = quantityModeVal === 'custom' ? quantityCustomVal : quantityModeVal;
+    const total = calcOrderTotal(priceLookup, orderType, weightVal, qtyVal);
+    if (total != null) {
+      setFormData((p) => ({ ...p, total_amount: String(total) }));
+      setTotalManual(false);
+    }
+  }, [priceLookup]);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    fetch(`${API}/order-type-prices`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.ok ? r.json() : { data: [] })
+      .then((data) => setOrderTypePrices(Array.isArray(data.data) ? data.data : []))
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    if (totalManual) return;
+    applyAutoTotal(formData.order_type, weightMode, weightCustom, quantityMode, quantityCustom);
+  }, [formData.order_type, weightMode, weightCustom, quantityMode, quantityCustom, priceLookup, totalManual, applyAutoTotal]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -116,12 +144,14 @@ const NewOrder = () => {
 
   const handleOrderTypeChange = (e) => {
     const v = e.target.value;
+    setTotalManual(false);
     setFormData((p) => ({ ...p, order_type: v }));
     generateOrderId(v);
   };
 
   const handleWeightModeChange = (e) => {
     const mode = e.target.value;
+    setTotalManual(mode === 'custom');
     setWeightMode(mode);
     syncWeightToForm(mode, weightCustom);
   };
@@ -129,18 +159,21 @@ const NewOrder = () => {
   const handleWeightCustomChange = (e) => {
     const v = e.target.value;
     setWeightCustom(v);
+    setTotalManual(true);
     if (weightMode === 'custom') syncWeightToForm('custom', v);
   };
 
   const handleQuantityModeChange = (e) => {
     const mode = e.target.value;
     setQuantityMode(mode);
+    setTotalManual(false);
     syncQuantityToForm(mode, quantityCustom);
   };
 
   const handleQuantityCustomChange = (e) => {
     const v = e.target.value;
     setQuantityCustom(v);
+    setTotalManual(false);
     if (quantityMode === 'custom') syncQuantityToForm('custom', v);
   };
 
@@ -151,6 +184,7 @@ const NewOrder = () => {
     setWeightCustom('');
     setQuantityMode('1');
     setQuantityCustom('');
+    setTotalManual(false);
     syncWeightToForm('10', '');
     syncQuantityToForm('1', '');
   };
@@ -351,7 +385,32 @@ const NewOrder = () => {
               </div>
             </Field>
             <Field label="Total Amount (PKR) *">
-              <input type="number" min="0" style={inputStyle} value={formData.total_amount} onChange={(e) => setFormData((p) => ({ ...p, total_amount: e.target.value }))} required />
+              <input
+                type="number"
+                min="0"
+                style={inputStyle}
+                value={formData.total_amount}
+                onChange={(e) => {
+                  setTotalManual(true);
+                  setFormData((p) => ({ ...p, total_amount: e.target.value }));
+                }}
+                required
+              />
+              {!totalManual && formData.order_type && (weightMode === '5' || weightMode === '10') && (
+                <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>
+                  Auto-filled from pricing — you can edit this amount
+                </div>
+              )}
+              {totalManual && formData.order_type && (weightMode === '5' || weightMode === '10') && (
+                <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>
+                  Manually edited — change type, weight, or quantity to recalculate
+                </div>
+              )}
+              {weightMode === 'custom' && (
+                <div style={{ fontSize: '10px', color: '#888', marginTop: '4px' }}>
+                  Custom weight — enter total manually
+                </div>
+              )}
             </Field>
             <Field label="Source *">
               <select style={inputStyle} value={formData.source} onChange={(e) => setFormData((p) => ({ ...p, source: e.target.value }))} required>
