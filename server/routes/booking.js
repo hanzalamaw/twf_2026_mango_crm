@@ -1,8 +1,10 @@
 import PDFDocument from "pdfkit";
+import multer from "multer";
 import { log, logError } from "../utils/logger.js";
 import { writeAuditLog } from "../utils/auditLog.js";
 import { limitOffsetClause } from "../utils/sqlPagination.js";
 import { buildBatchReceivedYearWhere, buildOrderBatchFilter, buildOrderYearWhere } from "../utils/yearFilter.js";
+import { uploadPaymentScreenshot, deleteRiderPhoto as deleteDriveFile, driveAuthErrorMessage } from "../utils/googleDriveUpload.js";
 import {
   assignOrderToChallan,
   normalizeAddress,
@@ -24,6 +26,45 @@ function toDateOnly(v) {
   const s = String(v);
   const match = s.match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : s;
+}
+
+const paymentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
+
+async function getOrderPaymentAggregates(db, orderId) {
+  const [rows] = await db.execute(
+    `SELECT COALESCE(SUM(bank), 0) AS bank,
+            COALESCE(SUM(bank_tw_traders), 0) AS bank_tw_traders,
+            COALESCE(SUM(cash), 0) AS cash,
+            COALESCE(SUM(total_received), 0) AS received
+     FROM payments WHERE order_id = ?`,
+    [orderId]
+  );
+  const r = rows[0] || {};
+  return {
+    bank: Number(r.bank) || 0,
+    bank_tw_traders: Number(r.bank_tw_traders) || 0,
+    cash: Number(r.cash) || 0,
+    received: Number(r.received) || 0,
+  };
+}
+
+async function syncOrderPaymentTotals(db, orderId) {
+  const [orders] = await db.execute(
+    "SELECT total_amount FROM orders WHERE order_id = ?",
+    [orderId]
+  );
+  if (!orders.length) return null;
+  const totalAmount = Number(orders[0].total_amount) || 0;
+  const agg = await getOrderPaymentAggregates(db, orderId);
+  const newPending = Math.max(0, totalAmount - agg.received);
+  await db.execute(
+    "UPDATE orders SET received_amount = ?, pending_amount = ? WHERE order_id = ?",
+    [agg.received, newPending, orderId]
+  );
+  return { ...agg, pending: newPending, total_amount: totalAmount };
 }
 
 /** Invoice PDF page 2 — T&Cs text from TWF Terms & Conditions (for invoice). */
@@ -852,16 +893,48 @@ export function registerBookingRoutes(app, db, verifyToken) {
     }
   });
 
-  app.post("/api/booking/orders/:orderId/payments", verifyToken, async (req, res) => {
+  app.get("/api/booking/orders/:orderId/payments", verifyToken, async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { bank = 0, bank_tw_traders = 0, cash = 0 } = req.body || {};
+      const [rows] = await db.execute(
+        `SELECT payment_id, bank, bank_tw_traders, cash, total_received, date,
+                screenshot_url, screenshot_file_id, order_id
+         FROM payments
+         WHERE order_id = ?
+         ORDER BY date DESC, payment_id DESC`,
+        [orderId]
+      );
+      res.json({
+        data: rows.map((r) => ({
+          ...r,
+          date: toDateOnly(r.date) ?? r.date,
+          bank: Number(r.bank) || 0,
+          bank_tw_traders: Number(r.bank_tw_traders) || 0,
+          cash: Number(r.cash) || 0,
+          total_received: Number(r.total_received) || 0,
+        })),
+      });
+    } catch (error) {
+      logError("BOOKING", "List order payments error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.post("/api/booking/orders/:orderId/payments", verifyToken, paymentUpload.single("screenshot"), async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const body = req.body || {};
+      const { bank = 0, bank_tw_traders = 0, cash = 0 } = body;
 
       const addBank = Math.max(0, Number(bank) || 0);
       const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
       const addCash = Math.max(0, Number(cash) || 0);
       if (addBank === 0 && addBankTwTraders === 0 && addCash === 0) {
         return res.status(400).json({ message: "Add at least one of bank, bank (TW Traders), or cash amount" });
+      }
+
+      if (addBank + addBankTwTraders > 0 && !req.file) {
+        return res.status(400).json({ message: "Bank payment requires a screenshot attachment" });
       }
 
       const [orders] = await db.execute("SELECT * FROM orders WHERE order_id = ?", [orderId]);
@@ -879,6 +952,16 @@ export function registerBookingRoutes(app, db, verifyToken) {
         return res.status(400).json({ message: "Total received cannot exceed order total amount" });
       }
 
+      let screenshotUrl = null;
+      let screenshotFileId = null;
+      if (req.file) {
+        const ext = req.file.mimetype === "image/jpeg" ? "jpg" : req.file.mimetype === "image/webp" ? "webp" : "png";
+        const fileName = `payment-${orderId}-${Date.now()}.${ext}`;
+        const uploaded = await uploadPaymentScreenshot(req.file.buffer, fileName, req.file.mimetype);
+        screenshotUrl = uploaded.screenshotUrl;
+        screenshotFileId = uploaded.fileId;
+      }
+
       const [idRows] = await db.execute(
         "SELECT COALESCE(MAX(CAST(SUBSTRING(payment_id, 3, 4) AS UNSIGNED)), 0) + 1 AS nextId FROM payments WHERE payment_id LIKE 'P-%'"
       );
@@ -887,15 +970,12 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const today = toDateOnly(new Date());
 
       await db.execute(
-        `INSERT INTO payments (payment_id, order_id, bank, bank_tw_traders, cash, total_received, date)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, orderId, addBank, addBankTwTraders, addCash, paymentAmount, today]
+        `INSERT INTO payments (payment_id, order_id, bank, bank_tw_traders, cash, total_received, date, screenshot_url, screenshot_file_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, orderId, addBank, addBankTwTraders, addCash, paymentAmount, today, screenshotUrl, screenshotFileId]
       );
 
-      await db.execute(
-        `UPDATE orders SET received_amount = ?, pending_amount = ? WHERE order_id = ?`,
-        [newReceived, Math.max(0, totalAmount - newReceived), orderId]
-      );
+      const totals = await syncOrderPaymentTotals(db, orderId);
 
       await writeAuditLog(db, {
         user_id: req.userId,
@@ -907,8 +987,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
           bank: addBank,
           bank_tw_traders: addBankTwTraders,
           cash: addCash,
-          total_received: newReceived,
-          pending_amount: Math.max(0, totalAmount - newReceived),
+          total_received: totals?.received ?? newReceived,
+          pending_amount: totals?.pending ?? Math.max(0, totalAmount - newReceived),
+          screenshot_url: screenshotUrl,
           order_id: order.order_id,
           customer_id: order.customer_id,
           contact: order.contact,
@@ -927,11 +1008,162 @@ export function registerBookingRoutes(app, db, verifyToken) {
       res.json({
         message: "Payment added",
         payment_id: paymentId,
-        received: newReceived,
-        pending: Math.max(0, totalAmount - newReceived),
+        received: totals?.received ?? newReceived,
+        pending: totals?.pending ?? Math.max(0, totalAmount - newReceived),
+        bank: totals?.bank ?? 0,
+        bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        cash: totals?.cash ?? 0,
       });
     } catch (error) {
       logError("BOOKING", "Add payment error", error);
+      const driveMsg = driveAuthErrorMessage(error);
+      res.status(driveMsg ? 503 : 500).json({ message: driveMsg || "Server error" });
+    }
+  });
+
+  app.put("/api/booking/payments/:paymentId", verifyToken, async (req, res) => {
+    try {
+      const { paymentId } = req.params;
+      const { bank = 0, bank_tw_traders = 0, cash = 0, date } = req.body || {};
+
+      const addBank = Math.max(0, Number(bank) || 0);
+      const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
+      const addCash = Math.max(0, Number(cash) || 0);
+      if (addBank === 0 && addBankTwTraders === 0 && addCash === 0) {
+        return res.status(400).json({ message: "At least one amount must be greater than zero" });
+      }
+
+      const [existingRows] = await db.execute(
+        "SELECT * FROM payments WHERE payment_id = ?",
+        [paymentId]
+      );
+      if (!existingRows.length) {
+        return res.status(404).json({ message: "Payment not found" });
+      }
+      const existing = existingRows[0];
+      const orderId = existing.order_id;
+
+      const [orders] = await db.execute("SELECT total_amount FROM orders WHERE order_id = ?", [orderId]);
+      if (!orders.length) {
+        return res.status(404).json({ message: "Order not found" });
+      }
+      const totalAmount = Number(orders[0].total_amount) || 0;
+      const paymentAmount = addBank + addBankTwTraders + addCash;
+
+      const [otherRows] = await db.execute(
+        "SELECT COALESCE(SUM(total_received), 0) AS sum FROM payments WHERE order_id = ? AND payment_id != ?",
+        [orderId, paymentId]
+      );
+      const othersSum = Number(otherRows[0]?.sum ?? 0);
+      if (othersSum + paymentAmount > totalAmount) {
+        return res.status(400).json({ message: "Total received cannot exceed order total amount" });
+      }
+
+      const paymentDate = date !== undefined ? toDateOnly(date) : toDateOnly(existing.date);
+
+      await db.execute(
+        `UPDATE payments SET bank = ?, bank_tw_traders = ?, cash = ?, total_received = ?, date = ?
+         WHERE payment_id = ?`,
+        [addBank, addBankTwTraders, addCash, paymentAmount, paymentDate, paymentId]
+      );
+
+      const totals = await syncOrderPaymentTotals(db, orderId);
+
+      await writeAuditLog(db, {
+        user_id: req.userId,
+        action: "UPDATE_PAYMENT",
+        entity_type: "payments",
+        entity_id: paymentId,
+        old_values: {
+          bank: Number(existing.bank) || 0,
+          bank_tw_traders: Number(existing.bank_tw_traders) || 0,
+          cash: Number(existing.cash) || 0,
+          total_received: Number(existing.total_received) || 0,
+          date: toDateOnly(existing.date),
+        },
+        new_values: {
+          bank: addBank,
+          bank_tw_traders: addBankTwTraders,
+          cash: addCash,
+          total_received: paymentAmount,
+          date: paymentDate,
+          order_id: orderId,
+          received: totals?.received,
+          pending: totals?.pending,
+        },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      log("BOOKING", "Payment updated", { user_id: req.userId, paymentId, orderId });
+      res.json({
+        message: "Payment updated",
+        payment_id: paymentId,
+        received: totals?.received ?? 0,
+        pending: totals?.pending ?? 0,
+        bank: totals?.bank ?? 0,
+        bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        cash: totals?.cash ?? 0,
+      });
+    } catch (error) {
+      logError("BOOKING", "Update payment error", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  app.delete("/api/booking/payments/:paymentId", verifyToken, async (req, res) => {
+    try {
+      const { paymentId } = req.params;
+      const [existingRows] = await db.execute(
+        "SELECT * FROM payments WHERE payment_id = ?",
+        [paymentId]
+      );
+      if (!existingRows.length) {
+        return res.status(404).json({ message: "Payment not found" });
+      }
+      const existing = existingRows[0];
+      const orderId = existing.order_id;
+
+      await db.execute("DELETE FROM payments WHERE payment_id = ?", [paymentId]);
+
+      if (existing.screenshot_file_id) {
+        await deleteDriveFile(existing.screenshot_file_id);
+      }
+
+      const totals = await syncOrderPaymentTotals(db, orderId);
+
+      await writeAuditLog(db, {
+        user_id: req.userId,
+        action: "DELETE_PAYMENT",
+        entity_type: "payments",
+        entity_id: paymentId,
+        old_values: {
+          bank: Number(existing.bank) || 0,
+          bank_tw_traders: Number(existing.bank_tw_traders) || 0,
+          cash: Number(existing.cash) || 0,
+          total_received: Number(existing.total_received) || 0,
+          date: toDateOnly(existing.date),
+          order_id: orderId,
+        },
+        new_values: {
+          received: totals?.received,
+          pending: totals?.pending,
+        },
+        ip_address: req.ip,
+        user_agent: req.get("user-agent"),
+      });
+
+      log("BOOKING", "Payment deleted", { user_id: req.userId, paymentId, orderId });
+      res.json({
+        message: "Payment deleted",
+        received: totals?.received ?? 0,
+        pending: totals?.pending ?? 0,
+        bank: totals?.bank ?? 0,
+        bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        cash: totals?.cash ?? 0,
+      });
+    } catch (error) {
+      logError("BOOKING", "Delete payment error", error);
       res.status(500).json({ message: "Server error" });
     }
   });

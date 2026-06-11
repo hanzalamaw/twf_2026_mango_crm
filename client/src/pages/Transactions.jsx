@@ -118,8 +118,19 @@ export default function Transactions() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState('all');
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [orderPayments, setOrderPayments] = useState([]);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [screenshotFile, setScreenshotFile] = useState(null);
+  const [screenshotPreview, setScreenshotPreview] = useState('');
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [editBank, setEditBank] = useState('');
+  const [editBankTwTraders, setEditBankTwTraders] = useState('');
+  const [editCash, setEditCash] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [paymentActionLoading, setPaymentActionLoading] = useState(false);
   const typeDropdownRef = useRef(null);
   const searchInputRef = useRef(null);
+  const screenshotInputRef = useRef(null);
 
   const token = localStorage.getItem('token');
   const activeColumns = ORDER_COLUMNS;
@@ -217,12 +228,64 @@ export default function Transactions() {
   }, [typeDropdownOpen]);
 
   /* Search + payment status are applied in SQL (full dataset), then page/limit — not on the current page only */
+  const fetchOrderPayments = useCallback(async (orderId) => {
+    if (!orderId) return;
+    setPaymentsLoading(true);
+    try {
+      const res = await fetch(`${API}/booking/orders/${encodeURIComponent(orderId)}/payments`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOrderPayments(Array.isArray(data.data) ? data.data : []);
+      } else {
+        setOrderPayments([]);
+      }
+    } catch {
+      setOrderPayments([]);
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }, [token]);
+
+  const applyOrderTotals = (totals) => {
+    if (!totals) return;
+    setModalOrder((prev) => prev ? ({
+      ...prev,
+      received: totals.received ?? prev.received,
+      pending: totals.pending ?? prev.pending,
+      bank: totals.bank ?? prev.bank,
+      bank_tw_traders: totals.bank_tw_traders ?? prev.bank_tw_traders,
+      cash: totals.cash ?? prev.cash,
+    }) : prev);
+  };
+
+  const clearScreenshot = () => {
+    setScreenshotFile(null);
+    setScreenshotPreview('');
+    if (screenshotInputRef.current) screenshotInputRef.current.value = '';
+  };
+
+  const setScreenshotFromFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setScreenshotFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => setScreenshotPreview(e.target?.result || '');
+    reader.readAsDataURL(file);
+  };
+
+  const bankPaymentRequired =
+    (parseFloat(addBank) || 0) > 0 || (parseFloat(addBankTwTraders) || 0) > 0;
+
   const openModal = (order) => {
     setModalOrder(order);
     setAddBank('');
     setAddBankTwTraders('');
     setAddCash('');
     setPaymentErrors({});
+    clearScreenshot();
+    setEditingPaymentId(null);
+    fetchOrderPayments(order.order_id);
   };
 
   const toggleSelect = (id) =>
@@ -331,6 +394,7 @@ export default function Transactions() {
     if (newReceivedVal > totalAmountVal) err.add = err.add || `Total received cannot exceed total amount (${formatAmount(totalAmountVal)}).`;
     const pendingAmount = Number(modalOrder?.pending) || 0;
     if (addB + addBT + addC > pendingAmount) err.add = err.add || `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (bankPaymentRequired && !screenshotFile) err.screenshot = 'Attach a bank transfer screenshot (paste or browse).';
     setPaymentErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -344,10 +408,16 @@ export default function Transactions() {
     if (bank === 0 && bank_tw_traders === 0 && cash === 0) return;
     setSubmitting(true);
     try {
+      const form = new FormData();
+      form.append('bank', String(bank));
+      form.append('bank_tw_traders', String(bank_tw_traders));
+      form.append('cash', String(cash));
+      if (screenshotFile) form.append('screenshot', screenshotFile);
+
       const res = await fetch(`${API}/booking/orders/${encodeURIComponent(modalOrder.order_id)}/payments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ bank, bank_tw_traders, cash }),
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -355,6 +425,7 @@ export default function Transactions() {
         setAddBank('');
         setAddBankTwTraders('');
         setAddCash('');
+        clearScreenshot();
         fetchSummary();
         fetchOrders();
       } else {
@@ -364,6 +435,95 @@ export default function Transactions() {
       setError('Failed to add payment');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const startEditPayment = (payment) => {
+    setEditingPaymentId(payment.payment_id);
+    setEditBank(String(Number(payment.bank) || 0));
+    setEditBankTwTraders(String(Number(payment.bank_tw_traders) || 0));
+    setEditCash(String(Number(payment.cash) || 0));
+    setEditDate(formatDate(payment.date) !== '—' ? formatDate(payment.date) : '');
+  };
+
+  const cancelEditPayment = () => {
+    setEditingPaymentId(null);
+    setEditBank('');
+    setEditBankTwTraders('');
+    setEditCash('');
+    setEditDate('');
+  };
+
+  const handleSaveEditPayment = async () => {
+    if (!editingPaymentId || !modalOrder) return;
+    const bank = Math.max(0, parseFloat(editBank) || 0);
+    const bank_tw_traders = Math.max(0, parseFloat(editBankTwTraders) || 0);
+    const cash = Math.max(0, parseFloat(editCash) || 0);
+    if (bank === 0 && bank_tw_traders === 0 && cash === 0) {
+      setError('Enter at least one amount.');
+      return;
+    }
+    setPaymentActionLoading(true);
+    try {
+      const res = await fetch(`${API}/booking/payments/${encodeURIComponent(editingPaymentId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ bank, bank_tw_traders, cash, date: editDate || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        applyOrderTotals(data);
+        cancelEditPayment();
+        fetchOrderPayments(modalOrder.order_id);
+        fetchSummary();
+        fetchOrders();
+      } else {
+        setError(data.message || 'Failed to update payment');
+      }
+    } catch {
+      setError('Failed to update payment');
+    } finally {
+      setPaymentActionLoading(false);
+    }
+  };
+
+  const handleDeletePayment = async (paymentId) => {
+    if (!modalOrder || !window.confirm('Delete this payment? Order totals will be updated.')) return;
+    setPaymentActionLoading(true);
+    try {
+      const res = await fetch(`${API}/booking/payments/${encodeURIComponent(paymentId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (editingPaymentId === paymentId) cancelEditPayment();
+        applyOrderTotals(data);
+        fetchOrderPayments(modalOrder.order_id);
+        fetchSummary();
+        fetchOrders();
+      } else {
+        setError(data.message || 'Failed to delete payment');
+      }
+    } catch {
+      setError('Failed to delete payment');
+    } finally {
+      setPaymentActionLoading(false);
+    }
+  };
+
+  const handleScreenshotPaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          setScreenshotFromFile(file);
+        }
+        break;
+      }
     }
   };
 
@@ -964,13 +1124,14 @@ export default function Transactions() {
               <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(modalOrder.pending)}</div></div>
             </div>
 
-            {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash) && (
+            {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash || paymentErrors.screenshot) && (
               <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                 {getPaymentRealtimeError()}
                 {!getPaymentRealtimeError() && paymentErrors.add}
                 {paymentErrors.addBank && <div>Bank (TWF): {paymentErrors.addBank}</div>}
                 {paymentErrors.addBankTwTraders && <div>Bank (TW Traders): {paymentErrors.addBankTwTraders}</div>}
                 {paymentErrors.addCash && <div>Cash: {paymentErrors.addCash}</div>}
+                {paymentErrors.screenshot && <div>{paymentErrors.screenshot}</div>}
               </div>
             )}
 
@@ -1001,6 +1162,64 @@ export default function Transactions() {
               </div>
             </div>
 
+            {bankPaymentRequired && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: '600' }}>
+                  Attach Screenshot <span style={{ color: '#b91c1c' }}>*</span>
+                </label>
+                <div
+                  tabIndex={0}
+                  onPaste={handleScreenshotPaste}
+                  style={{
+                    border: paymentErrors.screenshot ? '1px dashed #dc2626' : '1px dashed #cbd5e1',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    background: '#f8fafc',
+                    outline: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      onClick={() => screenshotInputRef.current?.click()}
+                      style={{ padding: '8px 12px', fontSize: '11px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer' }}
+                    >
+                      Browse
+                    </button>
+                    <span style={{ fontSize: '10px', color: '#64748b' }}>or paste image here (Ctrl+V)</span>
+                    {screenshotFile && (
+                      <button
+                        type="button"
+                        onClick={clearScreenshot}
+                        style={{ padding: '6px 10px', fontSize: '10px', background: '#fee2e2', color: '#b91c1c', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    ref={screenshotInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) setScreenshotFromFile(file);
+                    }}
+                  />
+                  {screenshotPreview && (
+                    <div style={{ marginTop: '10px' }}>
+                      <img
+                        src={screenshotPreview}
+                        alt="Screenshot preview"
+                        style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '6px', border: '1px solid #e2e8f0', objectFit: 'contain' }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="txn-modal-summary" style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
               <div><span style={{ color: '#666' }}>New Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
               <div><span style={{ color: '#666' }}>New Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankTwTraders)}</div></div>
@@ -1009,12 +1228,112 @@ export default function Transactions() {
               <div><span style={{ color: '#666' }}>New Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(newPending)}</div></div>
             </div>
 
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '600', color: '#555', marginBottom: '8px' }}>Received Payments</div>
+              {editingPaymentId && (
+                <div style={{ padding: '10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '10px' }}>
+                  <div style={{ fontSize: '10px', fontWeight: '600', marginBottom: '8px', color: '#92400e' }}>Edit payment {editingPaymentId}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '8px' }}>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#666' }}>Bank (TWF)</label>
+                      <input type="number" min="0" step="0.01" value={editBank} onChange={(e) => setEditBank(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#666' }}>Bank (TW Traders)</label>
+                      <input type="number" min="0" step="0.01" value={editBankTwTraders} onChange={(e) => setEditBankTwTraders(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#666' }}>Cash</label>
+                      <input type="number" min="0" step="0.01" value={editCash} onChange={(e) => setEditCash(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '10px', color: '#666' }}>Date</label>
+                      <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: '6px', border: '1px solid #e0e0e0', fontSize: '11px' }} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={cancelEditPayment} disabled={paymentActionLoading} style={{ padding: '6px 12px', fontSize: '10px', background: '#e5e7eb', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Cancel</button>
+                    <button type="button" onClick={handleSaveEditPayment} disabled={paymentActionLoading} style={{ padding: '6px 12px', fontSize: '10px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                      {paymentActionLoading ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', overflow: 'auto', maxHeight: '220px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '10px' }}>
+                  <thead>
+                    <tr style={{ background: '#fafafa' }}>
+                      {['Date', 'ID', 'Bank (TWF)', 'Bank (TW)', 'Cash', 'Total', 'Screenshot', 'Actions'].map((h) => (
+                        <th key={h} style={{ padding: '8px 6px', textAlign: h.includes('Bank') || h === 'Cash' || h === 'Total' ? 'right' : 'left', fontWeight: '600', color: '#555', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentsLoading ? (
+                      <tr><td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: '#888' }}>Loading...</td></tr>
+                    ) : orderPayments.length === 0 ? (
+                      <tr><td colSpan={8} style={{ padding: '16px', textAlign: 'center', color: '#888' }}>No payments recorded yet.</td></tr>
+                    ) : (
+                      orderPayments.map((p) => (
+                        <tr key={p.payment_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                          <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>{formatDate(p.date)}</td>
+                          <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>{p.payment_id}</td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right' }}>{formatAmount(p.bank)}</td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right' }}>{formatAmount(p.bank_tw_traders)}</td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right' }}>{formatAmount(p.cash)}</td>
+                          <td style={{ padding: '8px 6px', textAlign: 'right', fontWeight: '600' }}>{formatAmount(p.total_received)}</td>
+                          <td style={{ padding: '8px 6px' }}>
+                            {p.screenshot_url ? (
+                              <button
+                                type="button"
+                                onClick={() => window.open(p.screenshot_url, '_blank', 'noopener,noreferrer')}
+                                style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}
+                                title="View screenshot"
+                              >
+                                <img src={p.screenshot_url} alt="Screenshot" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '4px', border: '1px solid #e2e8f0' }} />
+                              </button>
+                            ) : (
+                              <span style={{ color: '#cbd5e1' }}>—</span>
+                            )}
+                          </td>
+                          <td style={{ padding: '8px 6px', whiteSpace: 'nowrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => startEditPayment(p)}
+                              disabled={paymentActionLoading}
+                              style={{ padding: '4px 8px', fontSize: '10px', marginRight: '4px', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePayment(p.payment_id)}
+                              disabled={paymentActionLoading}
+                              style={{ padding: '4px 8px', fontSize: '10px', background: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div className="txn-modal-actions" style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button type="button" onClick={() => !submitting && setModalOrder(null)} disabled={submitting} style={{ padding: '8px 16px', background: '#e0e0e0', color: '#333', border: 'none', borderRadius: '8px', cursor: submitting ? 'not-allowed' : 'pointer' }}>Close</button>
               <button
                 type="button"
                 onClick={handleSubmitPayment}
-                disabled={submitting || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
+                disabled={
+                  submitting
+                  || paymentActionLoading
+                  || !!getPaymentRealtimeError()
+                  || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0)
+                  || (bankPaymentRequired && !screenshotFile)
+                }
                 style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submitting ? 'not-allowed' : 'pointer' }}
               >
                 {submitting ? 'Submitting...' : 'Submit'}

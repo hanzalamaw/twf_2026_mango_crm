@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { API_BASE as API } from '../config/api';
 import { useAuth } from '../context/AuthContext';
@@ -155,6 +155,9 @@ export default function OrderManagement() {
   const [addCash, setAddCash] = useState('');
   const [paymentErrors, setPaymentErrors] = useState({});
   const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [screenshotFile, setScreenshotFile] = useState(null);
+  const [screenshotPreview, setScreenshotPreview] = useState('');
+  const screenshotInputRef = useRef(null);
 
   const { authFetch } = useAuth();
   const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
@@ -333,6 +336,35 @@ export default function OrderManagement() {
     setAddBankTwTraders('');
     setAddCash('');
     setPaymentErrors({});
+    setScreenshotFile(null);
+    setScreenshotPreview('');
+    if (screenshotInputRef.current) screenshotInputRef.current.value = '';
+  };
+
+  const bankPaymentRequired =
+    (parseFloat(addBank) || 0) > 0 || (parseFloat(addBankTwTraders) || 0) > 0;
+
+  const setScreenshotFromFile = (file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setScreenshotFile(file);
+    const reader = new FileReader();
+    reader.onload = (e) => setScreenshotPreview(e.target?.result || '');
+    reader.readAsDataURL(file);
+  };
+
+  const handleScreenshotPaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          setScreenshotFromFile(file);
+        }
+        break;
+      }
+    }
   };
 
   const getPaymentRealtimeError = () => {
@@ -372,6 +404,9 @@ export default function OrderManagement() {
     if (addB + addBT + addC > pendingAmount) {
       err.add = err.add || `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     }
+    if (bankPaymentRequired && !screenshotFile) {
+      err.screenshot = 'Attach a bank transfer screenshot (paste or browse).';
+    }
     setPaymentErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -385,10 +420,15 @@ export default function OrderManagement() {
     if (bank === 0 && bank_tw_traders === 0 && cash === 0) return;
     setSubmittingPayment(true);
     try {
+      const form = new FormData();
+      form.append('bank', String(bank));
+      form.append('bank_tw_traders', String(bank_tw_traders));
+      form.append('cash', String(cash));
+      if (screenshotFile) form.append('screenshot', screenshotFile);
+
       const res = await authFetch(`${API}/booking/orders/${encodeURIComponent(paymentOrder.order_id)}/payments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bank, bank_tw_traders, cash }),
+        body: form,
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -806,13 +846,14 @@ export default function OrderManagement() {
                 <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.pending)}</div></div>
               </div>
 
-              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash) && (
+              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash || paymentErrors.screenshot) && (
                 <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                   {getPaymentRealtimeError()}
                   {!getPaymentRealtimeError() && paymentErrors.add}
                   {paymentErrors.addBank && <div>Bank (TWF): {paymentErrors.addBank}</div>}
                   {paymentErrors.addBankTwTraders && <div>Bank (TW Traders): {paymentErrors.addBankTwTraders}</div>}
                   {paymentErrors.addCash && <div>Cash: {paymentErrors.addCash}</div>}
+                  {paymentErrors.screenshot && <div>{paymentErrors.screenshot}</div>}
                 </div>
               )}
 
@@ -843,6 +884,33 @@ export default function OrderManagement() {
                 </div>
               </div>
 
+              {bankPaymentRequired && (
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '6px', fontWeight: '600' }}>
+                    Attach Screenshot <span style={{ color: '#b91c1c' }}>*</span>
+                  </label>
+                  <div
+                    tabIndex={0}
+                    onPaste={handleScreenshotPaste}
+                    style={{ border: paymentErrors.screenshot ? '1px dashed #dc2626' : '1px dashed #cbd5e1', borderRadius: '8px', padding: '12px', background: '#f8fafc', outline: 'none' }}
+                  >
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
+                      <button type="button" onClick={() => screenshotInputRef.current?.click()} style={{ padding: '8px 12px', fontSize: '11px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '6px', cursor: 'pointer' }}>Browse</button>
+                      <span style={{ fontSize: '10px', color: '#64748b' }}>or paste image here (Ctrl+V)</span>
+                      {screenshotFile && (
+                        <button type="button" onClick={() => { setScreenshotFile(null); setScreenshotPreview(''); if (screenshotInputRef.current) screenshotInputRef.current.value = ''; }} style={{ padding: '6px 10px', fontSize: '10px', background: '#fee2e2', color: '#b91c1c', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>Remove</button>
+                      )}
+                    </div>
+                    <input ref={screenshotInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => { const file = e.target.files?.[0]; if (file) setScreenshotFromFile(file); }} />
+                    {screenshotPreview && (
+                      <div style={{ marginTop: '10px' }}>
+                        <img src={screenshotPreview} alt="Screenshot preview" style={{ maxWidth: '100%', maxHeight: '140px', borderRadius: '6px', border: '1px solid #e2e8f0', objectFit: 'contain' }} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
                 <div><span style={{ color: '#666' }}>New Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
                 <div><span style={{ color: '#666' }}>New Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankTwTraders)}</div></div>
@@ -856,7 +924,7 @@ export default function OrderManagement() {
                 <button
                   type="button"
                   onClick={handleSubmitPayment}
-                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0)}
+                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0) || (bankPaymentRequired && !screenshotFile)}
                   style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submittingPayment ? 'not-allowed' : 'pointer' }}
                 >
                   {submittingPayment ? 'Submitting...' : 'Submit'}

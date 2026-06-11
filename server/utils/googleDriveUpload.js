@@ -29,17 +29,27 @@ function getDrive() {
   return drive;
 }
 
+/** Returns a user-facing message when Drive OAuth fails (e.g. expired refresh token). */
+export function driveAuthErrorMessage(err) {
+  const msg = String(err?.message || err?.response?.data?.error || "");
+  if (msg.includes("invalid_grant")) {
+    return "Google Drive token expired or revoked. Run: cd server && npm run get-drive-token — then paste the new GOOGLE_DRIVE_REFRESH_TOKEN into .env and restart the server.";
+  }
+  if (msg.includes("GOOGLE_DRIVE")) return msg;
+  return null;
+}
+
 function folderId() {
   return process.env.GOOGLE_DRIVE_FOLDER_ID.trim();
 }
 
-export async function uploadRiderPhoto(fileBuffer, fileName) {
+async function uploadImage(fileBuffer, fileName, mimeType) {
   const bufferStream = new PassThrough();
   bufferStream.end(fileBuffer);
 
   const res = await getDrive().files.create({
     requestBody: { name: fileName, parents: [folderId()] },
-    media: { mimeType: "image/jpeg", body: bufferStream },
+    media: { mimeType, body: bufferStream },
     fields: "id",
   });
 
@@ -58,6 +68,16 @@ export async function uploadRiderPhoto(fileBuffer, fileName) {
     fileId,
     photoUrl: `https://drive.google.com/uc?export=view&id=${fileId}`,
   };
+}
+
+export async function uploadRiderPhoto(fileBuffer, fileName) {
+  const { fileId, photoUrl } = await uploadImage(fileBuffer, fileName, "image/jpeg");
+  return { fileId, photoUrl };
+}
+
+export async function uploadPaymentScreenshot(fileBuffer, fileName, mimeType = "image/png") {
+  const { fileId, photoUrl } = await uploadImage(fileBuffer, fileName, mimeType);
+  return { fileId, screenshotUrl: photoUrl };
 }
 
 export async function deleteRiderPhoto(fileId) {

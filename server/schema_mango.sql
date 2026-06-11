@@ -270,6 +270,8 @@ CREATE TABLE IF NOT EXISTS `payments` (
   `total_received` decimal(10,2) DEFAULT 0.00,
   `date` date DEFAULT NULL,
   `order_id` varchar(50) DEFAULT NULL,
+  `screenshot_url` varchar(512) DEFAULT NULL,
+  `screenshot_file_id` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`payment_id`),
   KEY `order_id` (`order_id`),
   CONSTRAINT `payments_order_fk` FOREIGN KEY (`order_id`) REFERENCES `orders` (`order_id`) ON DELETE CASCADE
