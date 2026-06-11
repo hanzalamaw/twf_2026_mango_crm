@@ -9,6 +9,103 @@ import {
 
 const fmt = (n) => Number(n || 0).toLocaleString("en-PK");
 
+const fmtRs = (n) => `Rs. ${fmt(Math.round(Number(n || 0)))}`;
+
+const fmtKgPlain = (n) => `${fmt(Math.round(Number(n || 0)))} KG`;
+
+const ordinalDay = (day) => {
+  if (day % 100 >= 11 && day % 100 <= 13) return `${day}th`;
+  if (day % 10 === 1) return `${day}st`;
+  if (day % 10 === 2) return `${day}nd`;
+  if (day % 10 === 3) return `${day}rd`;
+  return `${day}th`;
+};
+
+const formatStatsDate = (date = new Date()) => {
+  const day = date.getDate();
+  const month = date.toLocaleDateString("en-GB", { month: "long" });
+  return `${ordinalDay(day)} ${month}, ${date.getFullYear()}`;
+};
+
+const formatBatchLabel = (batchNumber) => {
+  const s = String(batchNumber ?? "").trim();
+  if (/^\d+$/.test(s)) return s.padStart(2, "0");
+  return s || "—";
+};
+
+const pickLatestBatch = (rows = []) => {
+  if (!rows.length) return null;
+  return rows.reduce((best, row) => {
+    const n = parseInt(row.batch_number, 10);
+    const bn = parseInt(best.batch_number, 10);
+    if (!Number.isNaN(n) && (Number.isNaN(bn) || n > bn)) return row;
+    if (Number.isNaN(n) && Number.isNaN(bn)) return row.batch_number > best.batch_number ? row : best;
+    return best;
+  }, rows[0]);
+};
+
+const todayKey = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+function buildMangoStatsText({ kpis, mangoesRows, sources, salesOverview }) {
+  const lines = [];
+  lines.push(`*MANGO STATS - ${formatStatsDate()}*`);
+  lines.push("");
+  lines.push("*FINANCIAL SUMMARY:*");
+  lines.push("");
+  lines.push(`Total Orders: ${fmt(kpis?.totalOrders)}`);
+  lines.push(`Total Sale: ${fmtRs(kpis?.totalSales)}`);
+  lines.push(`Total Received: ${fmtRs(kpis?.receivedPayments)}`);
+  lines.push(`Total Pending: ${fmt(kpis?.pendingAmount)}`);
+  lines.push("");
+
+  const batch = pickLatestBatch(mangoesRows);
+  if (batch) {
+    lines.push(`*STOCK SUMMARY (Batch # ${formatBatchLabel(batch.batch_number)}):*`);
+    lines.push("");
+    lines.push(`Received: ${fmtKgPlain(batch.received)}`);
+    lines.push(`Ordered: ${fmtKgPlain(batch.ordered)}`);
+    lines.push(`Delivered: ${fmtKgPlain(batch.delivered_kg)}`);
+    lines.push(`Un-Ordered: ${fmtKgPlain(batch.unordered)}`);
+    lines.push("");
+    lines.push(`Compensation/Gift: ${fmtKgPlain(batch.compensation_or_gift)}`);
+    lines.push(`Rotten: ${fmtKgPlain(batch.rotten)}`);
+    lines.push(`Weight Loss: ${fmtKgPlain(batch.weight_loss)}`);
+    lines.push("");
+  }
+
+  if (sources?.length) {
+    lines.push("*SOURCE WISE SUMMARY:*");
+    lines.push("");
+    for (const s of sources) {
+      lines.push(`${s.sourceName}: ${fmt(s.count)}`);
+    }
+    lines.push("");
+  }
+
+  const today = todayKey();
+  const todayRow = (salesOverview || []).find((r) => r.date === today);
+  const todayOrders = todayRow?.orders ?? 0;
+  const todayKg = todayRow?.totalKg ?? 0;
+  lines.push("*DAILY SUMMARY:*");
+  lines.push("");
+  lines.push(`Total Orders Today: ${fmt(todayOrders)} (${fmt(todayKg)} KG)`);
+
+  return lines.join("\n");
+}
+
+const CopyStatsIcon = () => (
+  <svg className="ctrlIconBtnImg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+
 const formatChartDate = (dateStr) => {
   if (!dateStr) return "";
   const d = new Date(`${dateStr}T00:00:00`);
@@ -707,6 +804,7 @@ const Dashboard = () => {
   const [batches, setBatches] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState("all");
   const [kpiValuesVisible, setKpiValuesVisible] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   const token = useMemo(() => localStorage.getItem("token"), []);
   const headers = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);
@@ -765,6 +863,22 @@ const Dashboard = () => {
     setSelectedBatch(batch);
   }, []);
 
+  const handleCopyStats = useCallback(async () => {
+    const text = buildMangoStatsText({
+      kpis,
+      mangoesRows: mangoesData.rows,
+      sources,
+      salesOverview,
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    } catch (e) {
+      console.error(e);
+    }
+  }, [kpis, mangoesData.rows, sources, salesOverview]);
+
   return (
     <div className="page">
       <style>{`
@@ -805,8 +919,10 @@ const Dashboard = () => {
           padding:7px 10px; border-radius:10px; border:1px solid #e5e7eb; background:#fff;
           cursor:pointer; display:flex; align-items:center; justify-content:center;
           box-shadow:0 2px 6px rgba(0,0,0,0.04); transition:all .15s; line-height:1;
+          color:#6b7280;
         }
-        .ctrlIconBtn:hover  { background:#fff4f0; border-color:#FF5722; }
+        .ctrlIconBtn:hover  { background:#fff4f0; border-color:#FF5722; color:#FF5722; }
+        .ctrlIconBtn:disabled { opacity:.5; cursor:not-allowed; }
         .ctrlIconBtn:active { transform:scale(.96); }
         .ctrlIconBtnImg { width:18px; height:18px; display:block; }
 
@@ -941,6 +1057,16 @@ const Dashboard = () => {
             <option value="2025">2025</option>
             <option value="2024">2024</option>
           </select>
+          <button
+            type="button"
+            className="ctrlIconBtn"
+            onClick={handleCopyStats}
+            disabled={loading}
+            title={copyFeedback ? "Copied!" : "Copy Stats"}
+            aria-label={copyFeedback ? "Copied" : "Copy stats to clipboard"}
+          >
+            <CopyStatsIcon />
+          </button>
           <button
             type="button"
             className="ctrlIconBtn"

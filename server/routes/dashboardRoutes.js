@@ -170,7 +170,8 @@ export function registerDashboardRoutes(app, db, verifyToken) {
           COALESCE(SUM(o.total_amount), 0) AS totalSales,
           COALESCE(SUM(o.received_amount), 0) AS receivedPayments,
           COALESCE(SUM(o.pending_amount), 0) AS pendingPayments,
-          COALESCE(SUM(o.quantity), 0) AS totalQuantity
+          COALESCE(SUM(o.quantity), 0) AS totalQuantity,
+          COALESCE(SUM(${orderKgExpr("o")}), 0) AS totalKg
         FROM orders o
         ${where}
         GROUP BY DATE(o.booking_date)
@@ -190,6 +191,7 @@ export function registerDashboardRoutes(app, db, verifyToken) {
           receivedPayments: Number(r.receivedPayments || 0),
           pendingPayments: Number(r.pendingPayments || 0),
           totalQuantity: Number(r.totalQuantity || 0),
+          totalKg: Math.round(Number(r.totalKg || 0)),
           avgOrderValue: orders > 0 ? Math.round(totalSales / orders) : 0,
         };
       });
