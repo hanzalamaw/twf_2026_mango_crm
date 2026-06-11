@@ -20,6 +20,7 @@ import { writeAuditLog } from "./utils/auditLog.js";
 import { sendLoginNotificationEmail } from "./utils/email.js";
 import { ensurePasswordResetTable } from "./utils/ensurePasswordResetTable.js";
 import { registerBatchRoutes } from "./routes/batchRoutes.js";
+import { registerOrderTypePriceRoutes } from "./routes/orderTypePriceRoutes.js";
 import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardRoutes.js";
 import { registerOperationsRoutes } from "./routes/operationsRoutes.js";
 
@@ -236,6 +237,7 @@ const startServer = async () => {
     registerControlRoutes(app, db, verifyToken);
     registerBookingRoutes(app, db, verifyToken);
     registerBatchRoutes(app, db, verifyToken);
+    registerOrderTypePriceRoutes(app, db, verifyToken);
     registerDashboardRoutes(app, db, verifyToken);
     registerAccountingDashboardRoutes(app, db, verifyToken);
     registerPerformanceRoutes(app, db, verifyToken);
