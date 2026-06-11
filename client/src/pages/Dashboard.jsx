@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import { API_BASE } from "../config/api";
+import { copyToClipboard } from "../utils/copyToClipboard";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Cell, LabelList,
@@ -83,7 +84,7 @@ function buildMangoStatsText({ kpis, mangoesRows, sources, salesOverview }) {
     lines.push("*SOURCE WISE SUMMARY:*");
     lines.push("");
     for (const s of sources) {
-      lines.push(`${s.sourceName}: ${fmt(s.count)}`);
+      lines.push(`${s.sourceName}: ${fmt(s.count)} (${fmt(s.totalKg ?? 0)} KG)`);
     }
     lines.push("");
   }
@@ -449,6 +450,9 @@ const SourceWiseSummary = ({ sources }) => {
               <div className="sourceName">{s.sourceName}</div>
               <div className="sourceCount">
                 <AnimatedNumber value={Number(s.count || 0)} duration={500} format={(n) => fmt(Math.round(n))} />
+                {" ("}
+                <AnimatedNumber value={Number(s.totalKg || 0)} duration={500} format={(n) => fmt(Math.round(n))} />
+                {" KG)"}
               </div>
             </div>
           ))}
@@ -871,9 +875,11 @@ const Dashboard = () => {
       salesOverview,
     });
     try {
-      await navigator.clipboard.writeText(text);
-      setCopyFeedback(true);
-      setTimeout(() => setCopyFeedback(false), 2000);
+      const ok = await copyToClipboard(text);
+      if (ok) {
+        setCopyFeedback(true);
+        setTimeout(() => setCopyFeedback(false), 2000);
+      }
     } catch (e) {
       console.error(e);
     }

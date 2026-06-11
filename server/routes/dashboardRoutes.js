@@ -131,7 +131,8 @@ export function registerDashboardRoutes(app, db, verifyToken) {
         `
         SELECT
           TRIM(o.source) AS sourceName,
-          COUNT(*) AS count
+          COUNT(*) AS count,
+          COALESCE(SUM(${orderKgExpr("o")}), 0) AS totalKg
         FROM orders o
         ${where}
         GROUP BY TRIM(o.source)
@@ -143,6 +144,7 @@ export function registerDashboardRoutes(app, db, verifyToken) {
       const sources = (rows || []).map((r) => ({
         sourceName: r.sourceName || "—",
         count: Number(r.count || 0),
+        totalKg: Math.round(Number(r.totalKg || 0)),
       }));
 
       res.json({ sources });
