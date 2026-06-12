@@ -4,6 +4,12 @@ import { buildBatchReceivedYearWhere, buildBatchCreatedYearWhere } from "../util
 
 function toDateOnly(v) {
   if (v == null || v === "") return null;
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    const d = String(v.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
   const s = String(v);
   const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
   return m ? m[1] : null;
