@@ -37,6 +37,7 @@ async function getOrderPaymentAggregates(db, orderId) {
   const [rows] = await db.execute(
     `SELECT COALESCE(SUM(bank), 0) AS bank,
             COALESCE(SUM(bank_tw_traders), 0) AS bank_tw_traders,
+            COALESCE(SUM(bank_others), 0) AS bank_others,
             COALESCE(SUM(cash), 0) AS cash,
             COALESCE(SUM(total_received), 0) AS received
      FROM payments WHERE order_id = ?`,
@@ -46,6 +47,7 @@ async function getOrderPaymentAggregates(db, orderId) {
   return {
     bank: Number(r.bank) || 0,
     bank_tw_traders: Number(r.bank_tw_traders) || 0,
+    bank_others: Number(r.bank_others) || 0,
     cash: Number(r.cash) || 0,
     received: Number(r.received) || 0,
   };
@@ -434,7 +436,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const fromClause = `
         FROM orders o
         LEFT JOIN (
-          SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(cash) AS cash
+          SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(bank_others) AS bank_others, SUM(cash) AS cash
           FROM payments
           GROUP BY order_id
         ) p ON o.order_id = p.order_id
@@ -468,6 +470,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           o.total_amount AS total_amount,
           COALESCE(p.bank, 0) AS bank,
           COALESCE(p.bank_tw_traders, 0) AS bank_tw_traders,
+          COALESCE(p.bank_others, 0) AS bank_others,
           COALESCE(p.cash, 0) AS cash,
           o.received_amount AS received,
           o.pending_amount AS pending,
@@ -516,10 +519,11 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const [rows] = await db.execute(
         `SELECT COALESCE(SUM(p.bank), 0) AS total_bank_twf,
                 COALESCE(SUM(p.bank_tw_traders), 0) AS total_bank_tw_traders,
+                COALESCE(SUM(p.bank_others), 0) AS total_bank_others,
                 COALESCE(SUM(p.cash), 0) AS total_cash
          FROM orders o
          LEFT JOIN (
-           SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(cash) AS cash
+           SELECT order_id, SUM(bank) AS bank, SUM(bank_tw_traders) AS bank_tw_traders, SUM(bank_others) AS bank_others, SUM(cash) AS cash
            FROM payments GROUP BY order_id
          ) p ON o.order_id = p.order_id
          ${whereClause}`,
@@ -527,10 +531,12 @@ export function registerBookingRoutes(app, db, verifyToken) {
       );
       const totalBankTwf = Number(rows[0]?.total_bank_twf ?? 0);
       const totalBankTwTraders = Number(rows[0]?.total_bank_tw_traders ?? 0);
+      const totalBankOthers = Number(rows[0]?.total_bank_others ?? 0);
       res.json({
         totalBankTwf,
         totalBankTwTraders,
-        totalBank: totalBankTwf + totalBankTwTraders,
+        totalBankOthers,
+        totalBank: totalBankTwf + totalBankTwTraders + totalBankOthers,
         totalCash: Number(rows[0]?.total_cash ?? 0),
       });
     } catch (error) {
@@ -610,6 +616,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const [paySum] = await db.execute(
         `SELECT COALESCE(SUM(bank), 0) AS total_bank_twf,
                 COALESCE(SUM(bank_tw_traders), 0) AS total_bank_tw_traders,
+                COALESCE(SUM(bank_others), 0) AS total_bank_others,
                 COALESCE(SUM(cash), 0) AS total_cash,
                 COALESCE(SUM(total_received), 0) AS total_received
          FROM payments`
@@ -619,13 +626,14 @@ export function registerBookingRoutes(app, db, verifyToken) {
       );
       const totalBankTwf = Number(paySum[0]?.total_bank_twf ?? 0);
       const totalBankTwTraders = Number(paySum[0]?.total_bank_tw_traders ?? 0);
-      const totalBank = totalBankTwf + totalBankTwTraders;
+      const totalBankOthers = Number(paySum[0]?.total_bank_others ?? 0);
+      const totalBank = totalBankTwf + totalBankTwTraders + totalBankOthers;
       const totalCash = Number(paySum[0]?.total_cash ?? 0);
       const totalExpensesBank = Number(expSum[0]?.expenses_bank ?? 0);
       const totalExpensesCash = Number(expSum[0]?.expenses_cash ?? 0);
 
       const [payments] = await db.execute(
-        "SELECT p.payment_id, p.bank, p.bank_tw_traders, p.cash, p.total_received, p.date, p.order_id FROM payments p ORDER BY p.date DESC, p.payment_id DESC"
+        "SELECT p.payment_id, p.bank, p.bank_tw_traders, p.bank_others, p.cash, p.total_received, p.date, p.order_id FROM payments p ORDER BY p.date DESC, p.payment_id DESC"
       );
       const [expenses] = await db.execute(
         "SELECT expense_id, bank, cash, total, done_at, description FROM booking_expenses ORDER BY done_at DESC"
@@ -635,6 +643,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         summary: {
           totalBankTwf,
           totalBankTwTraders,
+          totalBankOthers,
           totalBank,
           totalCash,
           totalExpensesBank,
@@ -897,7 +906,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
     try {
       const { orderId } = req.params;
       const [rows] = await db.execute(
-        `SELECT payment_id, bank, bank_tw_traders, cash, total_received, date,
+        `SELECT payment_id, bank, bank_tw_traders, bank_others, cash, total_received, date,
                 screenshot_url, screenshot_file_id, order_id
          FROM payments
          WHERE order_id = ?
@@ -910,6 +919,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           date: toDateOnly(r.date) ?? r.date,
           bank: Number(r.bank) || 0,
           bank_tw_traders: Number(r.bank_tw_traders) || 0,
+          bank_others: Number(r.bank_others) || 0,
           cash: Number(r.cash) || 0,
           total_received: Number(r.total_received) || 0,
         })),
@@ -924,16 +934,17 @@ export function registerBookingRoutes(app, db, verifyToken) {
     try {
       const { orderId } = req.params;
       const body = req.body || {};
-      const { bank = 0, bank_tw_traders = 0, cash = 0 } = body;
+      const { bank = 0, bank_tw_traders = 0, bank_others = 0, cash = 0 } = body;
 
       const addBank = Math.max(0, Number(bank) || 0);
       const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
+      const addBankOthers = Math.max(0, Number(bank_others) || 0);
       const addCash = Math.max(0, Number(cash) || 0);
-      if (addBank === 0 && addBankTwTraders === 0 && addCash === 0) {
-        return res.status(400).json({ message: "Add at least one of bank, bank (TW Traders), or cash amount" });
+      if (addBank === 0 && addBankTwTraders === 0 && addBankOthers === 0 && addCash === 0) {
+        return res.status(400).json({ message: "Add at least one of bank, bank (TW Traders), bank (Others), or cash amount" });
       }
 
-      if (addBank + addBankTwTraders > 0 && !req.file) {
+      if (addBank + addBankTwTraders + addBankOthers > 0 && !req.file) {
         return res.status(400).json({ message: "Bank payment requires a screenshot attachment" });
       }
 
@@ -945,7 +956,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const order = orders[0];
       const totalAmount = Number(order.total_amount) || 0;
       const currentReceived = Number(order.received_amount) || 0;
-      const paymentAmount = addBank + addBankTwTraders + addCash;
+      const paymentAmount = addBank + addBankTwTraders + addBankOthers + addCash;
       const newReceived = currentReceived + paymentAmount;
 
       if (newReceived > totalAmount) {
@@ -970,9 +981,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const today = toDateOnly(new Date());
 
       await db.execute(
-        `INSERT INTO payments (payment_id, order_id, bank, bank_tw_traders, cash, total_received, date, screenshot_url, screenshot_file_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [paymentId, orderId, addBank, addBankTwTraders, addCash, paymentAmount, today, screenshotUrl, screenshotFileId]
+        `INSERT INTO payments (payment_id, order_id, bank, bank_tw_traders, bank_others, cash, total_received, date, screenshot_url, screenshot_file_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [paymentId, orderId, addBank, addBankTwTraders, addBankOthers, addCash, paymentAmount, today, screenshotUrl, screenshotFileId]
       );
 
       const totals = await syncOrderPaymentTotals(db, orderId);
@@ -986,6 +997,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
           payment_id: paymentId,
           bank: addBank,
           bank_tw_traders: addBankTwTraders,
+          bank_others: addBankOthers,
           cash: addCash,
           total_received: totals?.received ?? newReceived,
           pending_amount: totals?.pending ?? Math.max(0, totalAmount - newReceived),
@@ -1012,6 +1024,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         pending: totals?.pending ?? Math.max(0, totalAmount - newReceived),
         bank: totals?.bank ?? 0,
         bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        bank_others: totals?.bank_others ?? 0,
         cash: totals?.cash ?? 0,
       });
     } catch (error) {
@@ -1024,12 +1037,13 @@ export function registerBookingRoutes(app, db, verifyToken) {
   app.put("/api/booking/payments/:paymentId", verifyToken, async (req, res) => {
     try {
       const { paymentId } = req.params;
-      const { bank = 0, bank_tw_traders = 0, cash = 0, date } = req.body || {};
+      const { bank = 0, bank_tw_traders = 0, bank_others = 0, cash = 0, date } = req.body || {};
 
       const addBank = Math.max(0, Number(bank) || 0);
       const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
+      const addBankOthers = Math.max(0, Number(bank_others) || 0);
       const addCash = Math.max(0, Number(cash) || 0);
-      if (addBank === 0 && addBankTwTraders === 0 && addCash === 0) {
+      if (addBank === 0 && addBankTwTraders === 0 && addBankOthers === 0 && addCash === 0) {
         return res.status(400).json({ message: "At least one amount must be greater than zero" });
       }
 
@@ -1048,7 +1062,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         return res.status(404).json({ message: "Order not found" });
       }
       const totalAmount = Number(orders[0].total_amount) || 0;
-      const paymentAmount = addBank + addBankTwTraders + addCash;
+      const paymentAmount = addBank + addBankTwTraders + addBankOthers + addCash;
 
       const [otherRows] = await db.execute(
         "SELECT COALESCE(SUM(total_received), 0) AS sum FROM payments WHERE order_id = ? AND payment_id != ?",
@@ -1062,9 +1076,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const paymentDate = date !== undefined ? toDateOnly(date) : toDateOnly(existing.date);
 
       await db.execute(
-        `UPDATE payments SET bank = ?, bank_tw_traders = ?, cash = ?, total_received = ?, date = ?
+        `UPDATE payments SET bank = ?, bank_tw_traders = ?, bank_others = ?, cash = ?, total_received = ?, date = ?
          WHERE payment_id = ?`,
-        [addBank, addBankTwTraders, addCash, paymentAmount, paymentDate, paymentId]
+        [addBank, addBankTwTraders, addBankOthers, addCash, paymentAmount, paymentDate, paymentId]
       );
 
       const totals = await syncOrderPaymentTotals(db, orderId);
@@ -1077,6 +1091,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         old_values: {
           bank: Number(existing.bank) || 0,
           bank_tw_traders: Number(existing.bank_tw_traders) || 0,
+          bank_others: Number(existing.bank_others) || 0,
           cash: Number(existing.cash) || 0,
           total_received: Number(existing.total_received) || 0,
           date: toDateOnly(existing.date),
@@ -1084,6 +1099,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         new_values: {
           bank: addBank,
           bank_tw_traders: addBankTwTraders,
+          bank_others: addBankOthers,
           cash: addCash,
           total_received: paymentAmount,
           date: paymentDate,
@@ -1103,6 +1119,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         pending: totals?.pending ?? 0,
         bank: totals?.bank ?? 0,
         bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        bank_others: totals?.bank_others ?? 0,
         cash: totals?.cash ?? 0,
       });
     } catch (error) {
@@ -1140,6 +1157,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         old_values: {
           bank: Number(existing.bank) || 0,
           bank_tw_traders: Number(existing.bank_tw_traders) || 0,
+          bank_others: Number(existing.bank_others) || 0,
           cash: Number(existing.cash) || 0,
           total_received: Number(existing.total_received) || 0,
           date: toDateOnly(existing.date),
@@ -1160,6 +1178,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         pending: totals?.pending ?? 0,
         bank: totals?.bank ?? 0,
         bank_tw_traders: totals?.bank_tw_traders ?? 0,
+        bank_others: totals?.bank_others ?? 0,
         cash: totals?.cash ?? 0,
       });
     } catch (error) {

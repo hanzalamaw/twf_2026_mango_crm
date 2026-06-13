@@ -23,6 +23,7 @@ const COLUMNS = [
   { key: 'total_amount',    label: 'Total Amount'    },
   { key: 'bank',            label: 'Bank (TWF)'            },
   { key: 'bank_tw_traders', label: 'Bank (TW Traders)'     },
+  { key: 'bank_others',     label: 'Bank (Others)'         },
   { key: 'cash',            label: 'Cash'            },
   { key: 'received',        label: 'Received'        },
   { key: 'pending',         label: 'Pending'         },
@@ -32,7 +33,7 @@ const COLUMNS = [
   { key: 'payment_status',  label: 'Payment Status'  },
 ];
 
-const AMOUNT_KEYS = ['total_amount', 'bank', 'bank_tw_traders', 'cash', 'received', 'pending'];
+const AMOUNT_KEYS = ['total_amount', 'bank', 'bank_tw_traders', 'bank_others', 'cash', 'received', 'pending'];
 
 const EDIT_LABELS = {
   order_id: 'Order ID',
@@ -152,6 +153,7 @@ export default function OrderManagement() {
   const [paymentOrder, setPaymentOrder] = useState(null);
   const [addBank, setAddBank] = useState('');
   const [addBankTwTraders, setAddBankTwTraders] = useState('');
+  const [addBankOthers, setAddBankOthers] = useState('');
   const [addCash, setAddCash] = useState('');
   const [paymentErrors, setPaymentErrors] = useState({});
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -334,6 +336,7 @@ export default function OrderManagement() {
     setPaymentOrder(order);
     setAddBank('');
     setAddBankTwTraders('');
+    setAddBankOthers('');
     setAddCash('');
     setPaymentErrors({});
     setScreenshotFile(null);
@@ -342,7 +345,7 @@ export default function OrderManagement() {
   };
 
   const bankPaymentRequired =
-    (parseFloat(addBank) || 0) > 0 || (parseFloat(addBankTwTraders) || 0) > 0;
+    (parseFloat(addBank) || 0) > 0 || (parseFloat(addBankTwTraders) || 0) > 0 || (parseFloat(addBankOthers) || 0) > 0;
 
   const setScreenshotFromFile = (file) => {
     if (!file || !file.type.startsWith('image/')) return;
@@ -371,15 +374,18 @@ export default function OrderManagement() {
     if (!paymentOrder) return null;
     const bankVal = parseFloat(addBank);
     const bankTwVal = parseFloat(addBankTwTraders);
+    const bankOthersVal = parseFloat(addBankOthers);
     const cashVal = parseFloat(addCash);
     if (!Number.isNaN(bankVal) && bankVal < 0) return 'Amount cannot be negative.';
     if (!Number.isNaN(bankTwVal) && bankTwVal < 0) return 'Amount cannot be negative.';
+    if (!Number.isNaN(bankOthersVal) && bankOthersVal < 0) return 'Amount cannot be negative.';
     if (!Number.isNaN(cashVal) && cashVal < 0) return 'Amount cannot be negative.';
     const pendingAmount = Number(paymentOrder.pending) || 0;
     const addB = Math.max(0, Number.isNaN(bankVal) ? 0 : bankVal);
     const addBT = Math.max(0, Number.isNaN(bankTwVal) ? 0 : bankTwVal);
+    const addBO = Math.max(0, Number.isNaN(bankOthersVal) ? 0 : bankOthersVal);
     const addC = Math.max(0, Number.isNaN(cashVal) ? 0 : cashVal);
-    if (addB + addBT + addC > pendingAmount) return `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
+    if (addB + addBT + addBO + addC > pendingAmount) return `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     return null;
   };
 
@@ -387,21 +393,24 @@ export default function OrderManagement() {
     const err = {};
     const bank = parseFloat(addBank);
     const bankTw = parseFloat(addBankTwTraders);
+    const bankOthers = parseFloat(addBankOthers);
     const cash = parseFloat(addCash);
     const addB = Math.max(0, Number.isNaN(bank) ? 0 : bank);
     const addBT = Math.max(0, Number.isNaN(bankTw) ? 0 : bankTw);
+    const addBO = Math.max(0, Number.isNaN(bankOthers) ? 0 : bankOthers);
     const addC = Math.max(0, Number.isNaN(cash) ? 0 : cash);
     if (!Number.isNaN(bank) && bank < 0) err.addBank = 'Amount cannot be negative.';
     if (!Number.isNaN(bankTw) && bankTw < 0) err.addBankTwTraders = 'Amount cannot be negative.';
+    if (!Number.isNaN(bankOthers) && bankOthers < 0) err.addBankOthers = 'Amount cannot be negative.';
     if (!Number.isNaN(cash) && cash < 0) err.addCash = 'Amount cannot be negative.';
-    if (addB + addBT + addC === 0) err.add = 'Enter at least one amount (Cash, Bank TWF, or Bank TW Traders ≥ 0).';
+    if (addB + addBT + addBO + addC === 0) err.add = 'Enter at least one amount (Cash or any Bank ≥ 0).';
     const totalAmountVal = Number(paymentOrder?.total_amount) || 0;
     const currentReceivedVal = Number(paymentOrder?.received) || 0;
-    if (currentReceivedVal + addB + addBT + addC > totalAmountVal) {
+    if (currentReceivedVal + addB + addBT + addBO + addC > totalAmountVal) {
       err.add = err.add || `Total received cannot exceed total amount (${formatAmount(totalAmountVal)}).`;
     }
     const pendingAmount = Number(paymentOrder?.pending) || 0;
-    if (addB + addBT + addC > pendingAmount) {
+    if (addB + addBT + addBO + addC > pendingAmount) {
       err.add = err.add || `Total added cannot exceed pending (${formatAmount(pendingAmount)}).`;
     }
     if (bankPaymentRequired && !screenshotFile) {
@@ -416,13 +425,15 @@ export default function OrderManagement() {
     if (!validatePayment()) return;
     const bank = Math.max(0, parseFloat(addBank) || 0);
     const bank_tw_traders = Math.max(0, parseFloat(addBankTwTraders) || 0);
+    const bank_others = Math.max(0, parseFloat(addBankOthers) || 0);
     const cash = Math.max(0, parseFloat(addCash) || 0);
-    if (bank === 0 && bank_tw_traders === 0 && cash === 0) return;
+    if (bank === 0 && bank_tw_traders === 0 && bank_others === 0 && cash === 0) return;
     setSubmittingPayment(true);
     try {
       const form = new FormData();
       form.append('bank', String(bank));
       form.append('bank_tw_traders', String(bank_tw_traders));
+      form.append('bank_others', String(bank_others));
       form.append('cash', String(cash));
       if (screenshotFile) form.append('screenshot', screenshotFile);
 
@@ -435,6 +446,7 @@ export default function OrderManagement() {
         setPaymentOrder(null);
         setAddBank('');
         setAddBankTwTraders('');
+        setAddBankOthers('');
         setAddCash('');
         fetchOrders();
       } else {
@@ -518,14 +530,17 @@ export default function OrderManagement() {
 
   const currentBank = paymentOrder ? Number(paymentOrder.bank) || 0 : 0;
   const currentBankTwTraders = paymentOrder ? Number(paymentOrder.bank_tw_traders) || 0 : 0;
+  const currentBankOthers = paymentOrder ? Number(paymentOrder.bank_others) || 0 : 0;
   const currentCash = paymentOrder ? Number(paymentOrder.cash) || 0 : 0;
   const newBank = currentBank + Math.max(0, parseFloat(addBank) || 0);
   const newBankTwTraders = currentBankTwTraders + Math.max(0, parseFloat(addBankTwTraders) || 0);
+  const newBankOthers = currentBankOthers + Math.max(0, parseFloat(addBankOthers) || 0);
   const newCash = currentCash + Math.max(0, parseFloat(addCash) || 0);
   const currentReceived = paymentOrder ? Number(paymentOrder.received) || 0 : 0;
   const addTotal =
     Math.max(0, parseFloat(addBank) || 0) +
     Math.max(0, parseFloat(addBankTwTraders) || 0) +
+    Math.max(0, parseFloat(addBankOthers) || 0) +
     Math.max(0, parseFloat(addCash) || 0);
   const newReceived = currentReceived + addTotal;
   const totalAmount = paymentOrder ? Number(paymentOrder.total_amount) || 0 : 0;
@@ -841,28 +856,30 @@ export default function OrderManagement() {
                 <div><span style={{ color: '#666' }}>Total Amount</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.total_amount)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank_tw_traders)}</div></div>
+                <div><span style={{ color: '#666' }}>Current Bank (Others)</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.bank_others)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Cash</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.cash)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Received</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.received)}</div></div>
                 <div><span style={{ color: '#666' }}>Current Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(paymentOrder.pending)}</div></div>
               </div>
 
-              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addCash || paymentErrors.screenshot) && (
+              {(getPaymentRealtimeError() || paymentErrors.add || paymentErrors.addBank || paymentErrors.addBankTwTraders || paymentErrors.addBankOthers || paymentErrors.addCash || paymentErrors.screenshot) && (
                 <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                   {getPaymentRealtimeError()}
                   {!getPaymentRealtimeError() && paymentErrors.add}
                   {paymentErrors.addBank && <div>Bank (TWF): {paymentErrors.addBank}</div>}
                   {paymentErrors.addBankTwTraders && <div>Bank (TW Traders): {paymentErrors.addBankTwTraders}</div>}
+                  {paymentErrors.addBankOthers && <div>Bank (Others): {paymentErrors.addBankOthers}</div>}
                   {paymentErrors.addCash && <div>Cash: {paymentErrors.addCash}</div>}
                   {paymentErrors.screenshot && <div>{paymentErrors.screenshot}</div>}
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                 <div style={{ minWidth: 0 }}>
                   <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Cash</label>
                   <input
                     type="number" min="0" step="0.01" value={addCash}
-                    onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddCash(e.target.value); setPaymentErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, add: undefined })); }}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addCash) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                   />
                 </div>
@@ -870,7 +887,7 @@ export default function OrderManagement() {
                   <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TWF)</label>
                   <input
                     type="number" min="0" step="0.01" value={addBank}
-                    onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addCash: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddBank(e.target.value); setPaymentErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBank) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                   />
                 </div>
@@ -878,8 +895,16 @@ export default function OrderManagement() {
                   <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (TW Traders)</label>
                   <input
                     type="number" min="0" step="0.01" value={addBankTwTraders}
-                    onChange={(e) => { setAddBankTwTraders(e.target.value); setPaymentErrors((p) => ({ ...p, addBankTwTraders: undefined, addBank: undefined, addCash: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddBankTwTraders(e.target.value); setPaymentErrors((p) => ({ ...p, addBankTwTraders: undefined, addBank: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
                     style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBankTwTraders) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
+                  />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <label style={{ display: 'block', fontSize: '12px', color: '#666', marginBottom: '4px' }}>Add Bank (Others)</label>
+                  <input
+                    type="number" min="0" step="0.01" value={addBankOthers}
+                    onChange={(e) => { setAddBankOthers(e.target.value); setPaymentErrors((p) => ({ ...p, addBankOthers: undefined, addBank: undefined, addBankTwTraders: undefined, addCash: undefined, add: undefined })); }}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px', border: (getPaymentRealtimeError() || paymentErrors.addBankOthers) ? '1px solid #dc2626' : '1px solid #e0e0e0' }}
                   />
                 </div>
               </div>
@@ -914,6 +939,7 @@ export default function OrderManagement() {
               <div style={{ padding: '10px', background: '#f9fafb', borderRadius: '6px', marginBottom: '13px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '10px' }}>
                 <div><span style={{ color: '#666' }}>New Bank (TWF)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBank)}</div></div>
                 <div><span style={{ color: '#666' }}>New Bank (TW Traders)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankTwTraders)}</div></div>
+                <div><span style={{ color: '#666' }}>New Bank (Others)</span><div style={{ fontWeight: '600' }}>{formatAmount(newBankOthers)}</div></div>
                 <div><span style={{ color: '#666' }}>New Cash Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newCash)}</div></div>
                 <div><span style={{ color: '#666' }}>New Received Total</span><div style={{ fontWeight: '600' }}>{formatAmount(newReceived)}</div></div>
                 <div><span style={{ color: '#666' }}>New Pending</span><div style={{ fontWeight: '600' }}>{formatAmount(newPending)}</div></div>
@@ -924,7 +950,7 @@ export default function OrderManagement() {
                 <button
                   type="button"
                   onClick={handleSubmitPayment}
-                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addCash) || 0) === 0) || (bankPaymentRequired && !screenshotFile)}
+                  disabled={submittingPayment || !!getPaymentRealtimeError() || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addBankOthers) || 0) === 0 && (parseFloat(addCash) || 0) === 0) || (bankPaymentRequired && !screenshotFile)}
                   style={{ padding: '8px 16px', background: '#166534', color: '#fff', border: 'none', borderRadius: '8px', cursor: submittingPayment ? 'not-allowed' : 'pointer' }}
                 >
                   {submittingPayment ? 'Submitting...' : 'Submit'}
