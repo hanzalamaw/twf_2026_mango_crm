@@ -10,6 +10,15 @@ export function normalizeAddress(addr) {
     .replace(/\s+/g, " ");
 }
 
+/** Challan grouping key: Self orders each get their own challan. */
+function challanAddressNorm(address, orderId) {
+  const addrNorm = normalizeAddress(address);
+  if (addrNorm === "self") {
+    return `self:${String(orderId || "").trim()}`;
+  }
+  return addrNorm;
+}
+
 /**
  * Recompute challan aggregate fields from linked orders.
  * @param {import('mysql2/promise').Pool|import('mysql2/promise').PoolConnection} db
@@ -52,14 +61,31 @@ export async function assignOrderToChallan(db, order) {
   const address = String(order.address || "").trim();
   if (!orderId || !batch || !address) return null;
 
-  const addrNorm = normalizeAddress(address);
+  const addrNorm = challanAddressNorm(address, orderId);
   const area = order.area || null;
 
   const [existingLink] = await db.execute(
     `SELECT challan_id FROM challan_orders WHERE order_id = ?`,
     [orderId]
   );
-  if (existingLink.length > 0) return existingLink[0].challan_id;
+  if (existingLink.length > 0) {
+    const linkedChallanId = existingLink[0].challan_id;
+    if (normalizeAddress(address) !== "self") return linkedChallanId;
+
+    const [[challanRows], [siblingRows]] = await Promise.all([
+      db.execute(`SELECT address_norm FROM challan WHERE challan_id = ?`, [linkedChallanId]),
+      db.execute(
+        `SELECT order_id FROM challan_orders WHERE challan_id = ? AND order_id != ?`,
+        [linkedChallanId, orderId]
+      ),
+    ]);
+    const needsSplit =
+      challanRows[0]?.address_norm !== addrNorm || siblingRows.length > 0;
+    if (!needsSplit) return linkedChallanId;
+
+    await db.execute(`DELETE FROM challan_orders WHERE order_id = ?`, [orderId]);
+    await refreshChallanTotals(db, linkedChallanId);
+  }
 
   const [existingChallan] = await db.execute(
     `SELECT challan_id FROM challan
