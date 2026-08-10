@@ -113,7 +113,9 @@ const BudgetUsageTable = ({ categories, year, token }) => {
     { key: "done_by", label: "Done By" },
     { key: "category_name", label: "Category" },
     { key: "sub_category_name", label: "Sub-Category" },
-    { key: "bank", label: "Bank", numeric: true },
+    { key: "bank", label: "Bank (TWF)", numeric: true },
+    { key: "bank_tw_traders", label: "Bank (TW Traders)", numeric: true },
+    { key: "bank_others", label: "Bank (Others)", numeric: true },
     { key: "cash", label: "Cash", numeric: true },
     { key: "total", label: "Total", numeric: true },
   ];
@@ -121,7 +123,7 @@ const BudgetUsageTable = ({ categories, year, token }) => {
   const getCellValue = useCallback(
     (row, key) => {
       if (key === "done_at") return row.done_at || "—";
-      if (key === "bank" || key === "cash" || key === "total") return money(row[key]);
+      if (["bank", "bank_tw_traders", "bank_others", "cash", "total"].includes(key)) return money(row[key]);
       return row[key] || "—";
     },
     []
@@ -1441,7 +1443,7 @@ const AccountingDashboard = () => {
         <div>
           <h2 className="hTitle">Accounting Dashboard</h2>
           <p className="hSub">
-            Welcome{user?.name ? `, ${user.name}` : ""}. Cash, bank, expenses and budget overview.
+            Welcome{user?.name ? `, ${user.name}` : ""}. Actual received, expenses, and amounts after expenses.
           </p>
         </div>
 
@@ -1474,21 +1476,21 @@ const AccountingDashboard = () => {
 
       <div className="kpiGrid">
         <KPIBox
-          title="Cash"
+          title="Cash (Actual)"
           value={kpis?.cash}
           icon={salesIcon}
           bubble="#fff4e5"
           reveal={kpiValuesVisible}
         />
         <KPIBox
-          title="Bank"
+          title="Bank (Actual)"
           value={kpis?.bank}
           icon={salesIcon}
           bubble="#fff4e5"
           reveal={kpiValuesVisible}
         />
         <KPIBox
-          title="Total Received"
+          title="Total Received (Actual)"
           value={kpis?.totalReceived}
           icon={salesIcon}
           bubble="#fff4e5"
@@ -1498,15 +1500,15 @@ const AccountingDashboard = () => {
 
       <div className="kpiGrid">
         <KPIBox
-          title="Expenses from Bank"
-          value={kpis?.expenseBank}
+          title="Expenses from Cash"
+          value={kpis?.expenseCash}
           icon={expenseIcon}
           bubble="#fde8e8"
           reveal={kpiValuesVisible}
         />
         <KPIBox
-          title="Expenses from Cash"
-          value={kpis?.expenseCash}
+          title="Expenses from Bank"
+          value={kpis?.expenseBank}
           icon={expenseIcon}
           bubble="#fde8e8"
           reveal={kpiValuesVisible}
@@ -1516,6 +1518,30 @@ const AccountingDashboard = () => {
           value={kpis?.totalExpenses}
           icon={expenseIcon}
           bubble="#fde8e8"
+          reveal={kpiValuesVisible}
+        />
+      </div>
+
+      <div className="kpiGrid">
+        <KPIBox
+          title="Cash After Expenses"
+          value={kpis?.cashAfterExpenses}
+          icon={salesIcon}
+          bubble="#e8f5e9"
+          reveal={kpiValuesVisible}
+        />
+        <KPIBox
+          title="Bank After Expenses"
+          value={kpis?.bankAfterExpenses}
+          icon={salesIcon}
+          bubble="#e8f5e9"
+          reveal={kpiValuesVisible}
+        />
+        <KPIBox
+          title="Total After Expenses"
+          value={kpis?.totalAfterExpenses}
+          icon={salesIcon}
+          bubble="#e8f5e9"
           reveal={kpiValuesVisible}
         />
       </div>

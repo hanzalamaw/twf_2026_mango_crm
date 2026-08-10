@@ -45,8 +45,9 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
         `
         SELECT
           COALESCE(SUM(COALESCE(p.cash, 0)), 0) AS cash,
-          COALESCE(SUM(COALESCE(p.bank, 0)), 0) AS bank,
-          COALESCE(SUM(COALESCE(p.cash, 0) + COALESCE(p.bank, 0)), 0) AS totalReceived
+          COALESCE(SUM(COALESCE(p.bank, 0)), 0) AS bankTwf,
+          COALESCE(SUM(COALESCE(p.bank_tw_traders, 0)), 0) AS bankTwTraders,
+          COALESCE(SUM(COALESCE(p.bank_others, 0)), 0) AS bankOthers
         FROM payments p
         ${paymentWhere}
         `,
@@ -62,9 +63,11 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
       const [expenseRows] = await db.execute(
         `
         SELECT
-          COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS expenseBank,
+          COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS expenseBankTwf,
+          COALESCE(SUM(COALESCE(e.bank_tw_traders, 0)), 0) AS expenseBankTwTraders,
+          COALESCE(SUM(COALESCE(e.bank_others, 0)), 0) AS expenseBankOthers,
           COALESCE(SUM(COALESCE(e.cash, 0)), 0) AS expenseCash,
-          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.cash, 0))), 0) AS totalExpenses
+          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0) + COALESCE(e.cash, 0))), 0) AS totalExpenses
         FROM booking_expenses e
         ${expenseWhere}
         `,
@@ -74,15 +77,42 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
       const p = paymentRows?.[0] || {};
       const e = expenseRows?.[0] || {};
 
+      const cash = Number(p.cash || 0);
+      const bankTwf = Number(p.bankTwf || 0);
+      const bankTwTraders = Number(p.bankTwTraders || 0);
+      const bankOthers = Number(p.bankOthers || 0);
+      const bank = bankTwf + bankTwTraders + bankOthers;
+      const totalReceived = cash + bank;
+
+      const expenseBankTwf = Number(e.expenseBankTwf || 0);
+      const expenseBankTwTraders = Number(e.expenseBankTwTraders || 0);
+      const expenseBankOthers = Number(e.expenseBankOthers || 0);
+      const expenseBank = expenseBankTwf + expenseBankTwTraders + expenseBankOthers;
+      const expenseCash = Number(e.expenseCash || 0);
+      const totalExpenses = Number(e.totalExpenses || 0);
+
       res.json({
         kpis: {
-          cash: Number(p.cash || 0),
-          bank: Number(p.bank || 0),
-          totalReceived: Number(p.totalReceived || 0),
+          cash,
+          bank,
+          bankTwf,
+          bankTwTraders,
+          bankOthers,
+          totalReceived,
 
-          expenseBank: Number(e.expenseBank || 0),
-          expenseCash: Number(e.expenseCash || 0),
-          totalExpenses: Number(e.totalExpenses || 0),
+          expenseBank,
+          expenseBankTwf,
+          expenseBankTwTraders,
+          expenseBankOthers,
+          expenseCash,
+          totalExpenses,
+
+          cashAfterExpenses: cash - expenseCash,
+          bankAfterExpenses: bank - expenseBank,
+          bankTwfAfterExpenses: bankTwf - expenseBankTwf,
+          bankTwTradersAfterExpenses: bankTwTraders - expenseBankTwTraders,
+          bankOthersAfterExpenses: bankOthers - expenseBankOthers,
+          totalAfterExpenses: totalReceived - totalExpenses,
         },
       });
     } catch (e) {
@@ -107,7 +137,7 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
           c.category_id,
           c.name,
           COALESCE(c.budget, 0) AS budget,
-          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.cash, 0))), 0) AS usedBudget
+          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0) + COALESCE(e.cash, 0))), 0) AS usedBudget
         FROM booking_expense_categories c
         LEFT JOIN booking_expenses e
           ON e.category_id = c.category_id
@@ -131,7 +161,7 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
           sc.category_id,
           sc.name,
           COALESCE(sc.budget, 0) AS budget,
-          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.cash, 0))), 0) AS usedBudget
+          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0) + COALESCE(e.cash, 0))), 0) AS usedBudget
         FROM booking_expense_sub_categories sc
         LEFT JOIN booking_expenses e
           ON e.sub_category_id = sc.sub_category_id
@@ -201,9 +231,12 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
         `
         SELECT
           DATE(e.done_at) AS date,
-          COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS bankExpenses,
+          COALESCE(SUM(COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0)), 0) AS bankExpenses,
+          COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS bankTwfExpenses,
+          COALESCE(SUM(COALESCE(e.bank_tw_traders, 0)), 0) AS bankTwTradersExpenses,
+          COALESCE(SUM(COALESCE(e.bank_others, 0)), 0) AS bankOthersExpenses,
           COALESCE(SUM(COALESCE(e.cash, 0)), 0) AS cashExpenses,
-          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.cash, 0))), 0) AS totalExpenses
+          COALESCE(SUM(COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0) + COALESCE(e.cash, 0))), 0) AS totalExpenses
         FROM booking_expenses e
         ${where}
         GROUP BY DATE(e.done_at)
@@ -215,6 +248,9 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
       const series = (rows || []).map((r) => ({
         date: toDateOnly(r.date),
         bankExpenses: Number(r.bankExpenses || 0),
+        bankTwfExpenses: Number(r.bankTwfExpenses || 0),
+        bankTwTradersExpenses: Number(r.bankTwTradersExpenses || 0),
+        bankOthersExpenses: Number(r.bankOthersExpenses || 0),
         cashExpenses: Number(r.cashExpenses || 0),
         totalExpenses: Number(r.totalExpenses || 0),
       }));
@@ -256,8 +292,10 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
           e.description,
           e.done_by,
           e.bank,
+          e.bank_tw_traders,
+          e.bank_others,
           e.cash,
-          COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.cash, 0)) AS total,
+          COALESCE(e.total, COALESCE(e.bank, 0) + COALESCE(e.bank_tw_traders, 0) + COALESCE(e.bank_others, 0) + COALESCE(e.cash, 0)) AS total,
           c.name AS category_name,
           sc.name AS sub_category_name
         FROM booking_expenses e
@@ -277,17 +315,22 @@ export const registerAccountingDashboardRoutes = (app, db, verifyToken) => {
         category_name: r.category_name ?? "",
         sub_category_name: r.sub_category_name ?? "",
         bank: Number(r.bank || 0),
+        bank_tw_traders: Number(r.bank_tw_traders || 0),
+        bank_others: Number(r.bank_others || 0),
         cash: Number(r.cash || 0),
         total: Number(r.total || 0),
       }));
 
       const totals = expenses.reduce(
         (acc, row) => {
-          acc.bank += Number(row.bank || 0);
+          acc.bank += Number(row.bank || 0) + Number(row.bank_tw_traders || 0) + Number(row.bank_others || 0);
+          acc.bankTwf += Number(row.bank || 0);
+          acc.bankTwTraders += Number(row.bank_tw_traders || 0);
+          acc.bankOthers += Number(row.bank_others || 0);
           acc.cash += Number(row.cash || 0);
           return acc;
         },
-        { bank: 0, cash: 0 }
+        { bank: 0, bankTwf: 0, bankTwTraders: 0, bankOthers: 0, cash: 0 }
       );
 
       res.json({

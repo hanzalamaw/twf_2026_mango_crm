@@ -10,11 +10,15 @@ const EXPENSE_COLUMNS = [
   { key: 'description', label: 'Description' },
   { key: 'category_name', label: 'Category' },
   { key: 'sub_category_name', label: 'Sub-Category' },
-  { key: 'bank', label: 'Bank' },
+  { key: 'bank', label: 'Bank (TWF)' },
+  { key: 'bank_tw_traders', label: 'Bank (TW Traders)' },
+  { key: 'bank_others', label: 'Bank (Others)' },
   { key: 'cash', label: 'Cash' },
   { key: 'total', label: 'Total' },
   { key: 'done_by', label: 'Done By' },
 ];
+
+const AMOUNT_KEYS = ['bank', 'bank_tw_traders', 'bank_others', 'cash', 'total'];
 
 function formatAmount(val) {
   if (val == null || val === '') return '—';
@@ -90,6 +94,8 @@ export default function Expenses() {
   // ── Add modal ──
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addBank, setAddBank] = useState('');
+  const [addBankTwTraders, setAddBankTwTraders] = useState('');
+  const [addBankOthers, setAddBankOthers] = useState('');
   const [addCash, setAddCash] = useState('');
   const [addDescription, setAddDescription] = useState('');
   const [addDate, setAddDate] = useState('');
@@ -104,6 +110,8 @@ export default function Expenses() {
   // ── Edit modal ──
   const [editExpense, setEditExpense] = useState(null);
   const [editBank, setEditBank] = useState('');
+  const [editBankTwTraders, setEditBankTwTraders] = useState('');
+  const [editBankOthers, setEditBankOthers] = useState('');
   const [editCash, setEditCash] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editDate, setEditDate] = useState('');
@@ -237,7 +245,7 @@ export default function Expenses() {
 
   // ─── Add modal ────────────────────────────────────────────────────────────
   const openAddModal = async () => {
-    setAddBank(''); setAddCash(''); setAddDescription('');
+    setAddBank(''); setAddBankTwTraders(''); setAddBankOthers(''); setAddCash(''); setAddDescription('');
     setAddDate(''); setAddDoneBy(loggedInUserName); setAddErrors({});
     setAddCategoryId(''); setAddSubCategoryId('');
     setAddCatSpent(0); setAddSubSpent(0);
@@ -264,12 +272,16 @@ export default function Expenses() {
 
   const validateAdd = () => {
     const err = {};
-    const bank = parseFloat(addBank), cash = parseFloat(addCash);
+    const bank = parseFloat(addBank), bankTw = parseFloat(addBankTwTraders), bankOthers = parseFloat(addBankOthers), cash = parseFloat(addCash);
     const b = Math.max(0, Number.isNaN(bank) ? 0 : bank);
+    const bt = Math.max(0, Number.isNaN(bankTw) ? 0 : bankTw);
+    const bo = Math.max(0, Number.isNaN(bankOthers) ? 0 : bankOthers);
     const c = Math.max(0, Number.isNaN(cash) ? 0 : cash);
     if (!Number.isNaN(bank) && bank < 0) err.addBank = 'Must be ≥ 0';
+    if (!Number.isNaN(bankTw) && bankTw < 0) err.addBankTwTraders = 'Must be ≥ 0';
+    if (!Number.isNaN(bankOthers) && bankOthers < 0) err.addBankOthers = 'Must be ≥ 0';
     if (!Number.isNaN(cash) && cash < 0) err.addCash = 'Must be ≥ 0';
-    if (b + c === 0) err.add = 'Enter at least one amount (Bank or Cash ≥ 0).';
+    if (b + bt + bo + c === 0) err.add = 'Enter at least one amount (Bank TWF / TW Traders / Others or Cash).';
     setAddErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -277,15 +289,17 @@ export default function Expenses() {
   const handleAddExpense = async () => {
     if (!validateAdd()) return;
     const bank = Math.max(0, parseFloat(addBank) || 0);
+    const bank_tw_traders = Math.max(0, parseFloat(addBankTwTraders) || 0);
+    const bank_others = Math.max(0, parseFloat(addBankOthers) || 0);
     const cash = Math.max(0, parseFloat(addCash) || 0);
-    if (bank === 0 && cash === 0) return;
+    if (bank === 0 && bank_tw_traders === 0 && bank_others === 0 && cash === 0) return;
     setSubmitting(true);
     try {
       const res = await authFetch(expenseBasePath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          bank, cash,
+          bank, bank_tw_traders, bank_others, cash,
           description: addDescription.trim(),
           done_at: addDate || null,
           done_by: addDoneBy.trim() || loggedInUserName || null,
@@ -296,7 +310,7 @@ export default function Expenses() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setAddModalOpen(false);
-        setAddBank(''); setAddCash(''); setAddDescription(''); setAddDate(''); setAddDoneBy(loggedInUserName); setAddCategoryId(''); setAddSubCategoryId(''); setAddErrors({});
+        setAddBank(''); setAddBankTwTraders(''); setAddBankOthers(''); setAddCash(''); setAddDescription(''); setAddDate(''); setAddDoneBy(loggedInUserName); setAddCategoryId(''); setAddSubCategoryId(''); setAddErrors({});
         fetchSummary(); fetchExpenses();
         try {
           const nextRes = await authFetch(`${expenseBasePath}/next-id`, { headers: { Authorization: `Bearer ${token}` } });
@@ -313,6 +327,8 @@ export default function Expenses() {
   const openEditModal = async (row) => {
     setEditExpense(row);
     setEditBank(String(row.bank ?? ''));
+    setEditBankTwTraders(String(row.bank_tw_traders ?? ''));
+    setEditBankOthers(String(row.bank_others ?? ''));
     setEditCash(String(row.cash ?? ''));
     setEditDescription(String(row.description ?? ''));
     setEditDate(row.done_at ? row.done_at.split('T')[0] : '');
@@ -339,12 +355,16 @@ export default function Expenses() {
 
   const validateEdit = () => {
     const err = {};
-    const bank = parseFloat(editBank), cash = parseFloat(editCash);
+    const bank = parseFloat(editBank), bankTw = parseFloat(editBankTwTraders), bankOthers = parseFloat(editBankOthers), cash = parseFloat(editCash);
     const b = Math.max(0, Number.isNaN(bank) ? 0 : bank);
+    const bt = Math.max(0, Number.isNaN(bankTw) ? 0 : bankTw);
+    const bo = Math.max(0, Number.isNaN(bankOthers) ? 0 : bankOthers);
     const c = Math.max(0, Number.isNaN(cash) ? 0 : cash);
     if (!Number.isNaN(bank) && bank < 0) err.editBank = 'Must be ≥ 0';
+    if (!Number.isNaN(bankTw) && bankTw < 0) err.editBankTwTraders = 'Must be ≥ 0';
+    if (!Number.isNaN(bankOthers) && bankOthers < 0) err.editBankOthers = 'Must be ≥ 0';
     if (!Number.isNaN(cash) && cash < 0) err.editCash = 'Must be ≥ 0';
-    if (b + c === 0) err.edit = 'Enter at least one amount (Bank or Cash ≥ 0).';
+    if (b + bt + bo + c === 0) err.edit = 'Enter at least one amount (Bank TWF / TW Traders / Others or Cash).';
     setEditErrors(err);
     return Object.keys(err).length === 0;
   };
@@ -352,15 +372,17 @@ export default function Expenses() {
   const handleSaveEdit = async () => {
     if (!editExpense || !validateEdit()) return;
     const bank = Math.max(0, parseFloat(editBank) || 0);
+    const bank_tw_traders = Math.max(0, parseFloat(editBankTwTraders) || 0);
+    const bank_others = Math.max(0, parseFloat(editBankOthers) || 0);
     const cash = Math.max(0, parseFloat(editCash) || 0);
-    if (bank === 0 && cash === 0) return;
+    if (bank === 0 && bank_tw_traders === 0 && bank_others === 0 && cash === 0) return;
     setSubmitting(true);
     try {
       const res = await authFetch(`${expenseBasePath}/${encodeURIComponent(editExpense.expense_id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          bank, cash,
+          bank, bank_tw_traders, bank_others, cash,
           description: editDescription.trim(),
           done_at: editDate || null,
           done_by: editDoneBy.trim() || loggedInUserName || null,
@@ -414,7 +436,7 @@ export default function Expenses() {
     const rows = toExport.map((row) =>
       EXPENSE_COLUMNS.map((col) => {
         const val = row[col.key];
-        if (['bank', 'cash', 'total'].includes(col.key)) { const n = Number(val); return Number.isFinite(n) ? n : (val ?? ''); }
+        if (AMOUNT_KEYS.includes(col.key)) { const n = Number(val); return Number.isFinite(n) ? n : (val ?? ''); }
         if (col.key === 'done_at') return formatDate(val);
         return val != null ? String(val) : '—';
       })
@@ -688,25 +710,39 @@ export default function Expenses() {
             </div>
           </div>
 
-          {(addErrors.add || addErrors.addBank || addErrors.addCash) && (
+          {(addErrors.add || addErrors.addBank || addErrors.addBankTwTraders || addErrors.addBankOthers || addErrors.addCash) && (
             <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
               {addErrors.add}
-              {addErrors.addBank && <div>Bank: {addErrors.addBank}</div>}
+              {addErrors.addBank && <div>Bank (TWF): {addErrors.addBank}</div>}
+              {addErrors.addBankTwTraders && <div>Bank (TW Traders): {addErrors.addBankTwTraders}</div>}
+              {addErrors.addBankOthers && <div>Bank (Others): {addErrors.addBankOthers}</div>}
               {addErrors.addCash && <div>Cash: {addErrors.addCash}</div>}
             </div>
           )}
 
-          <div className="exp-modal-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(120px, 1fr))', gap: '10px', alignItems: 'end' }}>
+          <div className="exp-modal-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(8, minmax(110px, 1fr))', gap: '10px', alignItems: 'end' }}>
             <div>
-              <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Rs)</label>
+              <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TWF)</label>
               <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBank}
-                onChange={(e) => { setAddBank(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, add: undefined })); }}
+                onChange={(e) => { setAddBank(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
                 style={{ ...inputStyle(addErrors.addBank), height: '30px' }} />
+            </div>
+            <div>
+              <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TW Traders)</label>
+              <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBankTwTraders}
+                onChange={(e) => { setAddBankTwTraders(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
+                style={{ ...inputStyle(addErrors.addBankTwTraders), height: '30px' }} />
+            </div>
+            <div>
+              <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Others)</label>
+              <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBankOthers}
+                onChange={(e) => { setAddBankOthers(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
+                style={{ ...inputStyle(addErrors.addBankOthers), height: '30px' }} />
             </div>
             <div>
               <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Cash (Rs)</label>
               <input className="exp-modal-input" type="number" min="0" step="0.01" value={addCash}
-                onChange={(e) => { setAddCash(e.target.value); setAddErrors((p) => ({ ...p, addCash: undefined, add: undefined })); }}
+                onChange={(e) => { setAddCash(e.target.value); setAddErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, add: undefined })); }}
                 style={{ ...inputStyle(addErrors.addCash), height: '30px' }} />
             </div>
             <div style={{ gridColumn: 'span 2' }}>
@@ -738,7 +774,7 @@ export default function Expenses() {
               </select>
             </div>
             <div style={{ display: 'flex', alignItems: 'end', gap: '6px' }}>
-              <button type="button" onClick={handleAddExpense} disabled={submitting || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addCash) || 0) === 0)} style={{ width: '100%', padding: '7px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 600 }}>{submitting ? 'Submitting...' : 'Add'}</button>
+              <button type="button" onClick={handleAddExpense} disabled={submitting || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addBankOthers) || 0) === 0 && (parseFloat(addCash) || 0) === 0)} style={{ width: '100%', padding: '7px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 600 }}>{submitting ? 'Submitting...' : 'Add'}</button>
             </div>
           </div>
         </div>
@@ -754,7 +790,7 @@ export default function Expenses() {
                       <input type="checkbox" checked={expenses.length > 0 && selectedIds.size === expenses.length} onChange={toggleSelectAll} style={{ cursor: 'pointer' }} />
                     </th>
                     {EXPENSE_COLUMNS.map((col) => (
-                      <th key={col.key} style={{ padding: '10px 8px', textAlign: ['bank', 'cash', 'total'].includes(col.key) ? 'right' : 'left', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap' }}>{col.label}</th>
+                      <th key={col.key} style={{ padding: '10px 8px', textAlign: AMOUNT_KEYS.includes(col.key) ? 'right' : 'left', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', whiteSpace: 'nowrap' }}>{col.label}</th>
                     ))}
                     <th style={{ padding: '10px 8px', textAlign: 'center', fontWeight: '600', color: '#333', borderBottom: '2px solid #e0e0e0', width: '80px' }}>Actions</th>
                   </tr>
@@ -775,8 +811,8 @@ export default function Expenses() {
                           <input type="checkbox" checked={selectedIds.has(row.expense_id)} onChange={() => toggleSelect(row.expense_id)} style={{ cursor: 'pointer' }} />
                         </td>
                         {EXPENSE_COLUMNS.map((col) => (
-                          <td key={col.key} style={{ padding: '8px', textAlign: ['bank', 'cash', 'total'].includes(col.key) ? 'right' : 'left', whiteSpace: 'nowrap' }}>
-                            {['bank', 'cash', 'total'].includes(col.key)
+                          <td key={col.key} style={{ padding: '8px', textAlign: AMOUNT_KEYS.includes(col.key) ? 'right' : 'left', whiteSpace: 'nowrap' }}>
+                            {AMOUNT_KEYS.includes(col.key)
                               ? formatAmount(row[col.key])
                               : col.key === 'done_at'
                                 ? formatDate(row[col.key])
@@ -847,10 +883,12 @@ export default function Expenses() {
               <h3 style={{ margin: '0 0 13px 0', fontSize: '13px', fontWeight: '600' }}>Edit Expense</h3>
               <div style={{ fontSize: '10px', color: '#666', marginBottom: '10px' }}>Expense ID: {editExpense.expense_id} · Date: {formatDate(editExpense.done_at)}</div>
 
-              {(editErrors.edit || editErrors.editBank || editErrors.editCash) && (
+              {(editErrors.edit || editErrors.editBank || editErrors.editBankTwTraders || editErrors.editBankOthers || editErrors.editCash) && (
                 <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                   {editErrors.edit}
-                  {editErrors.editBank && <div>Bank: {editErrors.editBank}</div>}
+                  {editErrors.editBank && <div>Bank (TWF): {editErrors.editBank}</div>}
+                  {editErrors.editBankTwTraders && <div>Bank (TW Traders): {editErrors.editBankTwTraders}</div>}
+                  {editErrors.editBankOthers && <div>Bank (Others): {editErrors.editBankOthers}</div>}
                   {editErrors.editCash && <div>Cash: {editErrors.editCash}</div>}
                 </div>
               )}
@@ -858,15 +896,27 @@ export default function Expenses() {
               {/* Bank + Cash */}
               <div className="exp-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
                 <div>
-                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Rs)</label>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TWF)</label>
                   <input className="exp-modal-input" type="number" min="0" step="0.01" value={editBank}
-                    onChange={(e) => { setEditBank(e.target.value); setEditErrors((p) => ({ ...p, editBank: undefined, edit: undefined })); }}
+                    onChange={(e) => { setEditBank(e.target.value); setEditErrors((p) => ({ ...p, editBank: undefined, editBankTwTraders: undefined, editBankOthers: undefined, editCash: undefined, edit: undefined })); }}
                     style={inputStyle(editErrors.editBank)} />
+                </div>
+                <div>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TW Traders)</label>
+                  <input className="exp-modal-input" type="number" min="0" step="0.01" value={editBankTwTraders}
+                    onChange={(e) => { setEditBankTwTraders(e.target.value); setEditErrors((p) => ({ ...p, editBank: undefined, editBankTwTraders: undefined, editBankOthers: undefined, editCash: undefined, edit: undefined })); }}
+                    style={inputStyle(editErrors.editBankTwTraders)} />
+                </div>
+                <div>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Others)</label>
+                  <input className="exp-modal-input" type="number" min="0" step="0.01" value={editBankOthers}
+                    onChange={(e) => { setEditBankOthers(e.target.value); setEditErrors((p) => ({ ...p, editBank: undefined, editBankTwTraders: undefined, editBankOthers: undefined, editCash: undefined, edit: undefined })); }}
+                    style={inputStyle(editErrors.editBankOthers)} />
                 </div>
                 <div>
                   <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Cash (Rs)</label>
                   <input className="exp-modal-input" type="number" min="0" step="0.01" value={editCash}
-                    onChange={(e) => { setEditCash(e.target.value); setEditErrors((p) => ({ ...p, editCash: undefined, edit: undefined })); }}
+                    onChange={(e) => { setEditCash(e.target.value); setEditErrors((p) => ({ ...p, editCash: undefined, editBank: undefined, editBankTwTraders: undefined, editBankOthers: undefined, edit: undefined })); }}
                     style={inputStyle(editErrors.editCash)} />
                 </div>
               </div>
@@ -913,7 +963,7 @@ export default function Expenses() {
 
               <div className="exp-modal-actions" style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '13px' }}>
                 <button type="button" onClick={() => !submitting && setEditExpense(null)} disabled={submitting} style={{ padding: '6px 13px', background: '#e0e0e0', color: '#333', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>Close</button>
-                <button type="button" onClick={handleSaveEdit} disabled={submitting || ((parseFloat(editBank) || 0) === 0 && (parseFloat(editCash) || 0) === 0)} style={{ padding: '6px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>{submitting ? 'Saving...' : 'Save'}</button>
+                <button type="button" onClick={handleSaveEdit} disabled={submitting || ((parseFloat(editBank) || 0) === 0 && (parseFloat(editBankTwTraders) || 0) === 0 && (parseFloat(editBankOthers) || 0) === 0 && (parseFloat(editCash) || 0) === 0)} style={{ padding: '6px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>{submitting ? 'Saving...' : 'Save'}</button>
               </div>
             </div>
           </div>
@@ -929,10 +979,12 @@ export default function Expenses() {
               <h3 style={{ margin: '0', fontSize: '13px', fontWeight: '600' }}>Add Expense</h3>
               <div style={{ fontSize: '10px', color: '#666', marginBottom: '13px' }}>Expense ID: {nextExpenseId || 'Loading...'}</div>
 
-              {(addErrors.add || addErrors.addBank || addErrors.addCash) && (
+              {(addErrors.add || addErrors.addBank || addErrors.addBankTwTraders || addErrors.addBankOthers || addErrors.addCash) && (
                 <div style={{ marginBottom: '10px', padding: '6px', background: '#fef2f2', color: '#b91c1c', borderRadius: '6px', fontSize: '10px' }}>
                   {addErrors.add}
-                  {addErrors.addBank && <div>Bank: {addErrors.addBank}</div>}
+                  {addErrors.addBank && <div>Bank (TWF): {addErrors.addBank}</div>}
+              {addErrors.addBankTwTraders && <div>Bank (TW Traders): {addErrors.addBankTwTraders}</div>}
+              {addErrors.addBankOthers && <div>Bank (Others): {addErrors.addBankOthers}</div>}
                   {addErrors.addCash && <div>Cash: {addErrors.addCash}</div>}
                 </div>
               )}
@@ -940,15 +992,27 @@ export default function Expenses() {
               {/* Bank + Cash */}
               <div className="exp-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
                 <div>
-                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Rs)</label>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TWF)</label>
                   <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBank}
-                    onChange={(e) => { setAddBank(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddBank(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
                     style={inputStyle(addErrors.addBank)} />
+                </div>
+                <div>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (TW Traders)</label>
+                  <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBankTwTraders}
+                    onChange={(e) => { setAddBankTwTraders(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
+                    style={inputStyle(addErrors.addBankTwTraders)} />
+                </div>
+                <div>
+                  <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Bank (Others)</label>
+                  <input className="exp-modal-input" type="number" min="0" step="0.01" value={addBankOthers}
+                    onChange={(e) => { setAddBankOthers(e.target.value); setAddErrors((p) => ({ ...p, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, addCash: undefined, add: undefined })); }}
+                    style={inputStyle(addErrors.addBankOthers)} />
                 </div>
                 <div>
                   <label className="exp-modal-label" style={{ display: 'block', fontSize: '10px', color: '#666', marginBottom: '3px' }}>Cash (Rs)</label>
                   <input className="exp-modal-input" type="number" min="0" step="0.01" value={addCash}
-                    onChange={(e) => { setAddCash(e.target.value); setAddErrors((p) => ({ ...p, addCash: undefined, add: undefined })); }}
+                    onChange={(e) => { setAddCash(e.target.value); setAddErrors((p) => ({ ...p, addCash: undefined, addBank: undefined, addBankTwTraders: undefined, addBankOthers: undefined, add: undefined })); }}
                     style={inputStyle(addErrors.addCash)} />
                 </div>
               </div>
@@ -995,7 +1059,7 @@ export default function Expenses() {
 
               <div className="exp-modal-actions" style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '13px' }}>
                 <button type="button" onClick={() => !submitting && setAddModalOpen(false)} disabled={submitting} style={{ padding: '6px 13px', background: '#e0e0e0', color: '#333', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>Close</button>
-                <button type="button" onClick={handleAddExpense} disabled={submitting || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addCash) || 0) === 0)} style={{ padding: '6px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>{submitting ? 'Submitting...' : 'Add'}</button>
+                <button type="button" onClick={handleAddExpense} disabled={submitting || ((parseFloat(addBank) || 0) === 0 && (parseFloat(addBankTwTraders) || 0) === 0 && (parseFloat(addBankOthers) || 0) === 0 && (parseFloat(addCash) || 0) === 0)} style={{ padding: '6px 13px', background: '#166534', color: '#fff', border: 'none', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '10px' }}>{submitting ? 'Submitting...' : 'Add'}</button>
               </div>
             </div>
           </div>

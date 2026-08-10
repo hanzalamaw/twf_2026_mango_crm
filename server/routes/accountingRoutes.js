@@ -145,12 +145,14 @@ function appendExpenseSearchCondition(cond, params, search) {
       OR c.name LIKE ?
       OR sc.name LIKE ?
       OR CAST(e.bank AS CHAR) LIKE ?
+      OR CAST(e.bank_tw_traders AS CHAR) LIKE ?
+      OR CAST(e.bank_others AS CHAR) LIKE ?
       OR CAST(e.cash AS CHAR) LIKE ?
       OR CAST(e.total AS CHAR) LIKE ?
     )
   `);
 
-  params.push(like, like, like, like, like, like, like, like);
+  params.push(like, like, like, like, like, like, like, like, like, like);
 }
 
 function registerExpenseRoutes(
@@ -408,8 +410,10 @@ function registerExpenseRoutes(
       const [rows] = await db.execute(
         `
         SELECT
-          COALESCE(SUM(e.bank), 0) AS b,
-          COALESCE(SUM(e.cash), 0) AS c
+          COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS b,
+          COALESCE(SUM(COALESCE(e.bank_tw_traders, 0)), 0) AS b_tw,
+          COALESCE(SUM(COALESCE(e.bank_others, 0)), 0) AS b_others,
+          COALESCE(SUM(COALESCE(e.cash, 0)), 0) AS c
         FROM \`${expTable}\` e
         LEFT JOIN \`${catTable}\` c ON c.category_id = e.category_id
         LEFT JOIN \`${subTable}\` sc ON sc.sub_category_id = e.sub_category_id
@@ -419,9 +423,15 @@ function registerExpenseRoutes(
       );
 
       const r = rows?.[0] || {};
+      const totalBankTwf = Number(r.b || 0);
+      const totalBankTwTraders = Number(r.b_tw || 0);
+      const totalBankOthers = Number(r.b_others || 0);
 
       res.json({
-        totalBank: Number(r.b || 0),
+        totalBankTwf,
+        totalBankTwTraders,
+        totalBankOthers,
+        totalBank: totalBankTwf + totalBankTwTraders + totalBankOthers,
         totalCash: Number(r.c || 0),
       });
     } catch (e) {
@@ -463,6 +473,8 @@ function registerExpenseRoutes(
         SELECT
           e.expense_id,
           e.bank,
+          e.bank_tw_traders,
+          e.bank_others,
           e.cash,
           e.total,
           e.done_at,
@@ -485,6 +497,8 @@ function registerExpenseRoutes(
       const data = (dataRows || []).map((r) => ({
         expense_id: r.expense_id,
         bank: Number(r.bank || 0),
+        bank_tw_traders: Number(r.bank_tw_traders || 0),
+        bank_others: Number(r.bank_others || 0),
         cash: Number(r.cash || 0),
         total: Number(r.total || 0),
         done_at: toDateOnly(r.done_at) ?? r.done_at,
@@ -507,6 +521,8 @@ function registerExpenseRoutes(
     try {
       const {
         bank = 0,
+        bank_tw_traders = 0,
+        bank_others = 0,
         cash = 0,
         description,
         done_at,
@@ -516,16 +532,18 @@ function registerExpenseRoutes(
       } = req.body || {};
 
       const bankVal = Math.max(0, parseFloat(bank) || 0);
+      const bankTwTradersVal = Math.max(0, parseFloat(bank_tw_traders) || 0);
+      const bankOthersVal = Math.max(0, parseFloat(bank_others) || 0);
       const cashVal = Math.max(0, parseFloat(cash) || 0);
 
-      if (bankVal + cashVal === 0) {
+      if (bankVal + bankTwTradersVal + bankOthersVal + cashVal === 0) {
         return res.status(400).json({
-          message: "At least one of bank or cash must be > 0",
+          message: "At least one of bank (TWF), bank (TW Traders), bank (Others), or cash must be > 0",
         });
       }
 
       const expense_id = await getNextExpenseId(db, expTable, idPrefix);
-      const totalVal = bankVal + cashVal;
+      const totalVal = bankVal + bankTwTradersVal + bankOthersVal + cashVal;
 
       const doneByVal = done_by
         ? String(done_by).trim()
@@ -537,6 +555,8 @@ function registerExpenseRoutes(
           (
             expense_id,
             bank,
+            bank_tw_traders,
+            bank_others,
             cash,
             total,
             description,
@@ -545,11 +565,13 @@ function registerExpenseRoutes(
             category_id,
             sub_category_id
           )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         [
           expense_id,
           bankVal,
+          bankTwTradersVal,
+          bankOthersVal,
           cashVal,
           totalVal,
           description ? String(description).trim() : null,
@@ -573,6 +595,8 @@ function registerExpenseRoutes(
 
       const {
         bank = 0,
+        bank_tw_traders = 0,
+        bank_others = 0,
         cash = 0,
         description,
         done_at,
@@ -582,15 +606,17 @@ function registerExpenseRoutes(
       } = req.body || {};
 
       const bankVal = Math.max(0, parseFloat(bank) || 0);
+      const bankTwTradersVal = Math.max(0, parseFloat(bank_tw_traders) || 0);
+      const bankOthersVal = Math.max(0, parseFloat(bank_others) || 0);
       const cashVal = Math.max(0, parseFloat(cash) || 0);
 
-      if (bankVal + cashVal === 0) {
+      if (bankVal + bankTwTradersVal + bankOthersVal + cashVal === 0) {
         return res.status(400).json({
-          message: "At least one of bank or cash must be > 0",
+          message: "At least one of bank (TWF), bank (TW Traders), bank (Others), or cash must be > 0",
         });
       }
 
-      const totalVal = bankVal + cashVal;
+      const totalVal = bankVal + bankTwTradersVal + bankOthersVal + cashVal;
 
       const doneByVal = done_by
         ? String(done_by).trim()
@@ -601,6 +627,8 @@ function registerExpenseRoutes(
         UPDATE \`${expTable}\`
         SET
           bank = ?,
+          bank_tw_traders = ?,
+          bank_others = ?,
           cash = ?,
           total = ?,
           description = ?,
@@ -612,6 +640,8 @@ function registerExpenseRoutes(
         `,
         [
           bankVal,
+          bankTwTradersVal,
+          bankOthersVal,
           cashVal,
           totalVal,
           description ? String(description).trim() : null,
@@ -821,6 +851,9 @@ export const registerAccountingRoutes = (app, db, verifyToken) => {
 
       let totalBank = 0;
       let totalCash = 0;
+      let totalBankTwf = 0;
+      let totalBankTwTraders = 0;
+      let totalBankOthers = 0;
 
       const sumTable = async (table, label) => {
         if (source === "Booking Management" || source === "booking") {
@@ -835,22 +868,36 @@ export const registerAccountingRoutes = (app, db, verifyToken) => {
         let searchCond = "";
         if (search) {
           const like = `%${search.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
-          searchCond = ` AND (e.expense_id LIKE ? OR e.description LIKE ? OR e.done_by LIKE ? OR CAST(e.bank AS CHAR) LIKE ? OR CAST(e.cash AS CHAR) LIKE ?)`;
-          params.push(like, like, like, like, like);
+          searchCond = ` AND (e.expense_id LIKE ? OR e.description LIKE ? OR e.done_by LIKE ? OR CAST(e.bank AS CHAR) LIKE ? OR CAST(e.bank_tw_traders AS CHAR) LIKE ? OR CAST(e.bank_others AS CHAR) LIKE ? OR CAST(e.cash AS CHAR) LIKE ?)`;
+          params.push(like, like, like, like, like, like, like);
         }
         const [rows] = await db.execute(
-          `SELECT COALESCE(SUM(e.bank),0) AS b, COALESCE(SUM(e.cash),0) AS c FROM \`${table}\` e ${where}${searchCond}`,
+          `SELECT
+             COALESCE(SUM(COALESCE(e.bank, 0)), 0) AS b,
+             COALESCE(SUM(COALESCE(e.bank_tw_traders, 0)), 0) AS b_tw,
+             COALESCE(SUM(COALESCE(e.bank_others, 0)), 0) AS b_others,
+             COALESCE(SUM(COALESCE(e.cash, 0)), 0) AS c
+           FROM \`${table}\` e ${where}${searchCond}`,
           params
         );
         const r = rows?.[0] || {};
-        totalBank += Number(r.b || 0);
+        totalBankTwf += Number(r.b || 0);
+        totalBankTwTraders += Number(r.b_tw || 0);
+        totalBankOthers += Number(r.b_others || 0);
+        totalBank += Number(r.b || 0) + Number(r.b_tw || 0) + Number(r.b_others || 0);
         totalCash += Number(r.c || 0);
       };
 
       await sumTable("booking_expenses", "Booking Management");
       await sumTable("farm_expenses", "Farm Management");
 
-      res.json({ totalBank, totalCash });
+      res.json({
+        totalBank,
+        totalCash,
+        totalBankTwf,
+        totalBankTwTraders,
+        totalBankOthers,
+      });
     } catch (e) {
       logError("ACCOUNTING", "Unified expenses summary error", e);
       res.status(500).json({ message: "Server error" });
@@ -1351,12 +1398,25 @@ export const registerAccountingRoutes = (app, db, verifyToken) => {
       const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
       const [rows] = await db.execute(
-        `SELECT COALESCE(SUM(p.bank),0) AS total_bank, COALESCE(SUM(p.cash),0) AS total_cash
+        `SELECT
+           COALESCE(SUM(COALESCE(p.bank, 0)), 0) AS total_bank_twf,
+           COALESCE(SUM(COALESCE(p.bank_tw_traders, 0)), 0) AS total_bank_tw_traders,
+           COALESCE(SUM(COALESCE(p.bank_others, 0)), 0) AS total_bank_others,
+           COALESCE(SUM(COALESCE(p.cash, 0)), 0) AS total_cash
          FROM payments p INNER JOIN orders o ON o.order_id = p.order_id ${where}`,
         params
       );
       const r = rows?.[0] || {};
-      res.json({ totalBank: Number(r.total_bank || 0), totalCash: Number(r.total_cash || 0) });
+      const totalBankTwf = Number(r.total_bank_twf || 0);
+      const totalBankTwTraders = Number(r.total_bank_tw_traders || 0);
+      const totalBankOthers = Number(r.total_bank_others || 0);
+      res.json({
+        totalBankTwf,
+        totalBankTwTraders,
+        totalBankOthers,
+        totalBank: totalBankTwf + totalBankTwTraders + totalBankOthers,
+        totalCash: Number(r.total_cash || 0),
+      });
     } catch (e) {
       logError("ACCOUNTING", "Payments summary error", e);
       res.status(500).json({ message: "Server error" });
@@ -1368,14 +1428,23 @@ app.get("/api/accounting/expenses/summary", verifyToken, async (req, res) => {
     const [rows] = await db.execute(
       `
       SELECT
-        COALESCE(SUM(bank), 0) AS total_bank,
-        COALESCE(SUM(cash), 0) AS total_cash
+        COALESCE(SUM(COALESCE(bank, 0)), 0) AS total_bank_twf,
+        COALESCE(SUM(COALESCE(bank_tw_traders, 0)), 0) AS total_bank_tw_traders,
+        COALESCE(SUM(COALESCE(bank_others, 0)), 0) AS total_bank_others,
+        COALESCE(SUM(COALESCE(cash, 0)), 0) AS total_cash
       FROM booking_expenses
       `
     );
 
+    const totalBankTwf = Number(rows[0]?.total_bank_twf ?? 0);
+    const totalBankTwTraders = Number(rows[0]?.total_bank_tw_traders ?? 0);
+    const totalBankOthers = Number(rows[0]?.total_bank_others ?? 0);
+
     res.json({
-      totalBank: Number(rows[0]?.total_bank ?? 0),
+      totalBankTwf,
+      totalBankTwTraders,
+      totalBankOthers,
+      totalBank: totalBankTwf + totalBankTwTraders + totalBankOthers,
       totalCash: Number(rows[0]?.total_cash ?? 0),
     });
   } catch (error) {

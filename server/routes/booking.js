@@ -622,7 +622,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
          FROM payments`
       );
       const [expSum] = await db.execute(
-        "SELECT COALESCE(SUM(bank), 0) AS expenses_bank, COALESCE(SUM(cash), 0) AS expenses_cash FROM booking_expenses"
+        "SELECT COALESCE(SUM(COALESCE(bank,0) + COALESCE(bank_tw_traders,0) + COALESCE(bank_others,0)), 0) AS expenses_bank, COALESCE(SUM(cash), 0) AS expenses_cash FROM booking_expenses"
       );
       const totalBankTwf = Number(paySum[0]?.total_bank_twf ?? 0);
       const totalBankTwTraders = Number(paySum[0]?.total_bank_tw_traders ?? 0);
@@ -636,7 +636,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
         "SELECT p.payment_id, p.bank, p.bank_tw_traders, p.bank_others, p.cash, p.total_received, p.date, p.order_id FROM payments p ORDER BY p.date DESC, p.payment_id DESC"
       );
       const [expenses] = await db.execute(
-        "SELECT expense_id, bank, cash, total, done_at, description FROM booking_expenses ORDER BY done_at DESC"
+        "SELECT expense_id, bank, bank_tw_traders, bank_others, cash, total, done_at, description FROM booking_expenses ORDER BY done_at DESC"
       );
 
       res.json({
@@ -664,10 +664,21 @@ export function registerBookingRoutes(app, db, verifyToken) {
   app.get("/api/booking/expenses/summary", verifyToken, async (req, res) => {
     try {
       const [rows] = await db.execute(
-        "SELECT COALESCE(SUM(bank), 0) AS total_bank, COALESCE(SUM(cash), 0) AS total_cash FROM booking_expenses"
+        `SELECT
+           COALESCE(SUM(COALESCE(bank, 0)), 0) AS total_bank_twf,
+           COALESCE(SUM(COALESCE(bank_tw_traders, 0)), 0) AS total_bank_tw_traders,
+           COALESCE(SUM(COALESCE(bank_others, 0)), 0) AS total_bank_others,
+           COALESCE(SUM(COALESCE(cash, 0)), 0) AS total_cash
+         FROM booking_expenses`
       );
+      const totalBankTwf = Number(rows[0]?.total_bank_twf ?? 0);
+      const totalBankTwTraders = Number(rows[0]?.total_bank_tw_traders ?? 0);
+      const totalBankOthers = Number(rows[0]?.total_bank_others ?? 0);
       res.json({
-        totalBank: Number(rows[0]?.total_bank ?? 0),
+        totalBankTwf,
+        totalBankTwTraders,
+        totalBankOthers,
+        totalBank: totalBankTwf + totalBankTwTraders + totalBankOthers,
         totalCash: Number(rows[0]?.total_cash ?? 0),
       });
     } catch (error) {
@@ -691,6 +702,8 @@ export function registerBookingRoutes(app, db, verifyToken) {
         SELECT
           e.expense_id,
           e.bank,
+          e.bank_tw_traders,
+          e.bank_others,
           e.cash,
           e.total,
           e.done_at,
@@ -707,7 +720,15 @@ export function registerBookingRoutes(app, db, verifyToken) {
       );
 
       res.json({
-        data: rows.map((r) => ({ ...r, done_at: toDateOnly(r.done_at) ?? r.done_at })),
+        data: rows.map((r) => ({
+          ...r,
+          bank: Number(r.bank) || 0,
+          bank_tw_traders: Number(r.bank_tw_traders) || 0,
+          bank_others: Number(r.bank_others) || 0,
+          cash: Number(r.cash) || 0,
+          total: Number(r.total) || 0,
+          done_at: toDateOnly(r.done_at) ?? r.done_at,
+        })),
         total,
       });
     } catch (error) {
@@ -718,15 +739,27 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
   app.post("/api/booking/expenses", verifyToken, async (req, res) => {
     try {
-      let { bank = 0, cash = 0, description = "", done_by = null, done_at = null } = req.body || {};
+      let {
+        bank = 0,
+        bank_tw_traders = 0,
+        bank_others = 0,
+        cash = 0,
+        description = "",
+        done_by = null,
+        done_at = null,
+      } = req.body || {};
 
       const addBank = Math.max(0, Number(bank) || 0);
+      const addBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
+      const addBankOthers = Math.max(0, Number(bank_others) || 0);
       const addCash = Math.max(0, Number(cash) || 0);
-      if (addBank === 0 && addCash === 0) {
-        return res.status(400).json({ message: "Add at least one of bank or cash amount" });
+      if (addBank === 0 && addBankTwTraders === 0 && addBankOthers === 0 && addCash === 0) {
+        return res.status(400).json({
+          message: "Add at least one of bank (TWF), bank (TW Traders), bank (Others), or cash amount",
+        });
       }
 
-      const total = addBank + addCash;
+      const total = addBank + addBankTwTraders + addBankOthers + addCash;
       description = String(description || "").trim() || null;
       done_by = done_by ? String(done_by).trim() : null;
 
@@ -748,9 +781,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
       const expenseId = `E-${String(idRows[0]?.nextId ?? 1).padStart(4, "0")}-${year}`;
 
       await db.execute(
-        `INSERT INTO booking_expenses (expense_id, bank, cash, total, description, done_by, done_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [expenseId, addBank, addCash, total, description, done_by || username, done_at, req.userId]
+        `INSERT INTO booking_expenses (expense_id, bank, bank_tw_traders, bank_others, cash, total, description, done_by, done_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [expenseId, addBank, addBankTwTraders, addBankOthers, addCash, total, description, done_by || username, done_at, req.userId]
       );
 
       await writeAuditLog(db, {
@@ -758,7 +791,16 @@ export function registerBookingRoutes(app, db, verifyToken) {
         action: "ADD_EXPENSE",
         entity_type: "booking_expenses",
         entity_id: expenseId,
-        new_values: { bank: addBank, cash: addCash, total, description, done_by: done_by || username, done_at },
+        new_values: {
+          bank: addBank,
+          bank_tw_traders: addBankTwTraders,
+          bank_others: addBankOthers,
+          cash: addCash,
+          total,
+          description,
+          done_by: done_by || username,
+          done_at,
+        },
         ip_address: req.ip,
         user_agent: req.get("user-agent"),
       });
@@ -774,15 +816,27 @@ export function registerBookingRoutes(app, db, verifyToken) {
   app.put("/api/booking/expenses/:expenseId", verifyToken, async (req, res) => {
     try {
       const { expenseId } = req.params;
-      let { bank, cash, description, done_by = null, done_at = null } = req.body || {};
+      let {
+        bank,
+        bank_tw_traders = 0,
+        bank_others = 0,
+        cash,
+        description,
+        done_by = null,
+        done_at = null,
+      } = req.body || {};
 
       const newBank = Math.max(0, Number(bank) || 0);
+      const newBankTwTraders = Math.max(0, Number(bank_tw_traders) || 0);
+      const newBankOthers = Math.max(0, Number(bank_others) || 0);
       const newCash = Math.max(0, Number(cash) || 0);
-      if (newBank === 0 && newCash === 0) {
-        return res.status(400).json({ message: "At least one of bank or cash must be greater than 0" });
+      if (newBank === 0 && newBankTwTraders === 0 && newBankOthers === 0 && newCash === 0) {
+        return res.status(400).json({
+          message: "At least one of bank (TWF), bank (TW Traders), bank (Others), or cash must be greater than 0",
+        });
       }
 
-      const total = newBank + newCash;
+      const total = newBank + newBankTwTraders + newBankOthers + newCash;
       description = String(description ?? "").trim() || null;
       done_by = done_by ? String(done_by).trim() || null : null;
 
@@ -794,7 +848,7 @@ export function registerBookingRoutes(app, db, verifyToken) {
       }
 
       const [existing] = await db.execute(
-        "SELECT expense_id, bank, cash, total, description, done_by, done_at FROM booking_expenses WHERE expense_id = ?",
+        "SELECT expense_id, bank, bank_tw_traders, bank_others, cash, total, description, done_by, done_at FROM booking_expenses WHERE expense_id = ?",
         [expenseId]
       );
       if (!existing.length) {
@@ -803,9 +857,9 @@ export function registerBookingRoutes(app, db, verifyToken) {
 
       const oldRow = existing[0];
       await db.execute(
-        `UPDATE booking_expenses SET bank = ?, cash = ?, total = ?, description = ?, done_by = ?, done_at = ?
+        `UPDATE booking_expenses SET bank = ?, bank_tw_traders = ?, bank_others = ?, cash = ?, total = ?, description = ?, done_by = ?, done_at = ?
          WHERE expense_id = ?`,
-        [newBank, newCash, total, description, done_by, done_at, expenseId]
+        [newBank, newBankTwTraders, newBankOthers, newCash, total, description, done_by, done_at, expenseId]
       );
 
       await writeAuditLog(db, {
@@ -814,7 +868,17 @@ export function registerBookingRoutes(app, db, verifyToken) {
         entity_type: "booking_expenses",
         entity_id: expenseId,
         old_values: { ...oldRow },
-        new_values: { expense_id: expenseId, bank: newBank, cash: newCash, total, description, done_by, done_at },
+        new_values: {
+          expense_id: expenseId,
+          bank: newBank,
+          bank_tw_traders: newBankTwTraders,
+          bank_others: newBankOthers,
+          cash: newCash,
+          total,
+          description,
+          done_by,
+          done_at,
+        },
         ip_address: req.ip,
         user_agent: req.get("user-agent"),
       });

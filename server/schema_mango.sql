@@ -284,6 +284,8 @@ CREATE TABLE IF NOT EXISTS `payments` (
 CREATE TABLE IF NOT EXISTS `booking_expenses` (
   `expense_id` varchar(50) NOT NULL,
   `bank` decimal(10,2) DEFAULT 0.00,
+  `bank_tw_traders` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `bank_others` decimal(10,2) NOT NULL DEFAULT 0.00,
   `cash` decimal(10,2) DEFAULT 0.00,
   `total` decimal(10,2) DEFAULT 0.00,
   `done_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -339,6 +341,8 @@ CREATE TABLE IF NOT EXISTS `accounting_expenses` (
   `expense_id` varchar(50) NOT NULL,
   `category_id` int(11) DEFAULT NULL,
   `bank` decimal(10,2) DEFAULT 0.00,
+  `bank_tw_traders` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `bank_others` decimal(10,2) NOT NULL DEFAULT 0.00,
   `cash` decimal(10,2) DEFAULT 0.00,
   `total` decimal(10,2) DEFAULT 0.00,
   `done_at` timestamp NOT NULL DEFAULT current_timestamp(),

@@ -89,6 +89,8 @@ INSERT INTO `booking_expenses` (`expense_id`, `bank`, `cash`, `total`, `done_at`
 CREATE TABLE `farm_expenses` (
   `expense_id` varchar(50) NOT NULL,
   `bank` decimal(10,2) DEFAULT 0.00,
+  `bank_tw_traders` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `bank_others` decimal(10,2) NOT NULL DEFAULT 0.00,
   `cash` decimal(10,2) DEFAULT 0.00,
   `total` decimal(10,2) DEFAULT 0.00,
   `done_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -265,6 +267,8 @@ CREATE TABLE `procurement_payments` (
 CREATE TABLE `procurement_expenses` (
   `expense_id` varchar(50) NOT NULL,
   `bank` decimal(12,2) DEFAULT 0.00,
+  `bank_tw_traders` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `bank_others` decimal(12,2) NOT NULL DEFAULT 0.00,
   `cash` decimal(12,2) DEFAULT 0.00,
   `total` decimal(12,2) DEFAULT 0.00,
   `done_at` timestamp NOT NULL DEFAULT current_timestamp(),
