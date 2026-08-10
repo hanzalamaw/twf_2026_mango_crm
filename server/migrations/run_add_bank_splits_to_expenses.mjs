@@ -1,25 +1,23 @@
 import "dotenv/config";
 import mysql from "mysql2/promise";
 
-const tables = [
-  "booking_expenses",
-  "farm_expenses",
-  "procurement_expenses",
-  "accounting_expenses",
-];
-
 async function ensureColumn(db, table, column, ddl) {
-  try {
-    const [cols] = await db.execute(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column]);
-    if (cols.length) {
-      console.log(`${table}.${column} already exists`);
-      return;
-    }
-    await db.execute(ddl);
-    console.log(`added ${table}.${column}`);
-  } catch (e) {
-    console.log(`skip ${table}.${column}: ${e.message}`);
+  const [tables] = await db.execute(
+    `SELECT 1 AS ok FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1`,
+    [table]
+  );
+  if (!tables.length) {
+    console.log(`skip missing table ${table}`);
+    return;
   }
+  const [cols] = await db.execute(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column]);
+  if (cols.length) {
+    console.log(`${table}.${column} already exists`);
+    return;
+  }
+  await db.execute(ddl);
+  console.log(`added ${table}.${column}`);
 }
 
 async function main() {
@@ -31,7 +29,8 @@ async function main() {
     connectTimeout: 20000,
   });
 
-  for (const t of tables) {
+  // Accounting CRM expenses use booking_expenses only
+  for (const t of ["booking_expenses", "farm_expenses", "procurement_expenses"]) {
     await ensureColumn(
       db,
       t,

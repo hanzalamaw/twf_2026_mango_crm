@@ -19,6 +19,7 @@ import { log, logError } from "./utils/logger.js";
 import { writeAuditLog } from "./utils/auditLog.js";
 import { sendLoginNotificationEmail } from "./utils/email.js";
 import { ensurePasswordResetTable } from "./utils/ensurePasswordResetTable.js";
+import { ensureExpenseBankSplits } from "./utils/ensureExpenseBankSplits.js";
 import { registerBatchRoutes } from "./routes/batchRoutes.js";
 import { registerOrderTypePriceRoutes } from "./routes/orderTypePriceRoutes.js";
 import { registerAccountingDashboardRoutes } from "./routes/AccountingDashboardRoutes.js";
@@ -62,6 +63,7 @@ const startServer = async () => {
 
     console.log("Connected to MySQL Database");
     await ensurePasswordResetTable(db);
+    await ensureExpenseBankSplits(db);
 
     const JWT_SECRET = process.env.JWT_SECRET || "your_super_secret_key";
     const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "1h";
